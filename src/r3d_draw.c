@@ -415,6 +415,57 @@ void R3D_DrawMeshInstancedPro(R3D_Mesh mesh, R3D_Material material, R3D_Instance
     r3d_render_call_push(&drawCall);
 }
 
+void R3D_DrawAnimatedMesh(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Vector3 position, float scale)
+{
+    Matrix transform = r3d_matrix_st(
+        (Vector3){scale, scale, scale},
+        position
+    );
+
+    R3D_DrawAnimatedMeshPro(
+        mesh,
+        material,
+        player,
+        transform
+    );
+}
+
+void R3D_DrawAnimatedMeshEx(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Vector3 position, Quaternion rotation, Vector3 scale)
+{
+    Matrix transform = r3d_matrix_srt_quat(
+        scale,
+        rotation,
+        position
+    );
+
+    R3D_DrawAnimatedMeshPro(
+        mesh,
+        material,
+        player,
+        transform
+    );
+}
+
+void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Matrix transform)
+{
+    if (!IS_MESH_VALID(mesh)) return;
+    if (player.skinTexture == 0) return;
+
+    r3d_render_group_t drawGroup = {0};
+    drawGroup.transform = transform;
+    drawGroup.obb = R3D_GetOrientedBox(mesh.aabb, transform);
+    drawGroup.skinTexture = player.skinTexture;
+
+    r3d_render_group_push(&drawGroup);
+
+    r3d_render_call_t drawCall = {0};
+    drawCall.type = R3D_RENDER_CALL_MESH;
+    drawCall.mesh.material = material;
+    drawCall.mesh.instance = mesh;
+
+    r3d_render_call_push(&drawCall);
+}
+
 void R3D_DrawModel(R3D_Model model, Vector3 position, float scale)
 {
     Matrix transform = r3d_matrix_st((Vector3) {scale, scale, scale}, position);

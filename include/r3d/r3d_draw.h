@@ -231,6 +231,23 @@ R3DAPI void R3D_DrawMeshInstancedEx(R3D_Mesh mesh, R3D_Material material, R3D_In
 R3DAPI void R3D_DrawMeshInstancedPro(R3D_Mesh mesh, R3D_Material material, R3D_InstanceBuffer instances, int offset, int count, Matrix transform);
 
 /**
+ * @brief Queues an animated mesh draw command.
+ *
+ * Uses the provided animation player for GPU skinning.
+ */
+R3DAPI void R3D_DrawAnimatedMesh(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Vector3 position, float scale);
+
+/**
+ * @brief Queues an animated mesh draw command with rotation and non-uniform scale.
+ */
+R3DAPI void R3D_DrawAnimatedMeshEx(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Vector3 position, Quaternion rotation, Vector3 scale);
+
+/**
+ * @brief Queues an animated mesh draw command using a full transform matrix.
+ */
+R3DAPI void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Matrix transform);
+
+/**
  * @brief Queues a model draw command with position and uniform scale.
  * 
  * The command is executed during R3D_End().
