@@ -118,7 +118,7 @@ static inline void process_vertex_color(Color* color, const struct aiMesh* aiMes
 // FACE/INDEX PROCESSING (INTERNAL)
 // ========================================
 
-static void process_indices(const struct aiMesh* aiMesh, R3D_MeshData* data)
+static void process_indices(const struct aiMesh* aiMesh, const R3D_MeshData* data)
 {
     uint32_t* indexPtr = data->indices;
     for (unsigned int i = 0; i < aiMesh->mNumFaces; i++)
@@ -175,42 +175,64 @@ static inline bool assign_bone_weight(R3D_Vertex* vertex, uint32_t boneIndex, ui
 
 static void normalize_bone_weights(R3D_Vertex* vertex)
 {
-    uint32_t sum = (uint32_t)vertex->boneWeights[0] + (uint32_t)vertex->boneWeights[1] +
-                   (uint32_t)vertex->boneWeights[2] + (uint32_t)vertex->boneWeights[3];
+    uint32_t sum = (uint32_t)vertex->boneWeights[0] + (uint32_t)vertex->boneWeights[1] + (uint32_t)vertex->boneWeights[2] + (uint32_t)vertex->boneWeights[3];
 
     if (sum == 255) return;
 
-    if (sum > 0)
-    {
-        uint32_t half = sum >> 1; // nearest rounding
-        vertex->boneWeights[0] = (uint8_t)((vertex->boneWeights[0] * 255 + half) / sum);
-        vertex->boneWeights[1] = (uint8_t)((vertex->boneWeights[1] * 255 + half) / sum);
-        vertex->boneWeights[2] = (uint8_t)((vertex->boneWeights[2] * 255 + half) / sum);
-        vertex->boneWeights[3] = (uint8_t)((vertex->boneWeights[3] * 255 + half) / sum);
-    }
-    else
+    if (sum == 0)
     {
         vertex->boneWeights[0] = 255;
+        return;
     }
+
+    int strongestSlot = 0;
+
+    for (int i = 1; i < MAX_BONE_WEIGHTS; i++)
+    {
+        if (vertex->boneWeights[i] > vertex->boneWeights[strongestSlot])
+        {
+            strongestSlot = i;
+        }
+    }
+
+    uint32_t half = sum >> 1;
+
+    for (int i = 0; i < MAX_BONE_WEIGHTS; i++)
+    {
+        vertex->boneWeights[i] = (uint8_t)((vertex->boneWeights[i] * 255u + half) / sum);
+    }
+
+    uint32_t finalSum = (uint32_t)vertex->boneWeights[0] + (uint32_t)vertex->boneWeights[1] + (uint32_t)vertex->boneWeights[2] + (uint32_t)vertex->boneWeights[3];
+
+    int correction = 255 - (int)finalSum;
+
+    vertex->boneWeights[strongestSlot] = (uint8_t)((int)vertex->boneWeights[strongestSlot] + correction);
 }
 
-static bool process_bones(const struct aiMesh* aiMesh, R3D_MeshData* data, int vertexCount)
+static bool process_bones(const R3D_Importer* importer, const struct aiMesh* aiMesh, R3D_MeshData* data, int vertexCount)
 {
+    // Check if the mesh has too many bones
     if (aiMesh->mNumBones == 0)
     {
-        // No bones - initialize default weights
         for (int i = 0; i < vertexCount; i++)
         {
             data->vertices[i].boneWeights[0] = 255;
         }
+
         return true;
     }
 
-    // Check if the mesh has too many bones
-    if (aiMesh->mNumBones > R3D_MAXOF(*data->vertices->boneIndices) + 1)
+    int maxBoneCount = R3D_MAXOF(*data->vertices->boneIndices) + 1;
+    int boneCount = r3d_importer_get_bone_count(importer);
+
+    if (boneCount > maxBoneCount)
     {
-        R3D_TRACELOG(LOG_WARNING, "Mesh has %u bones, max %d supported",
-            aiMesh->mNumBones, R3D_MAXOF(*data->vertices->boneIndices) + 1);
+        R3D_TRACELOG(
+            LOG_WARNING,
+            "Skeleton has %d bones, max %d supported",
+            boneCount,
+            maxBoneCount
+        );
         return false;
     }
 
@@ -218,6 +240,19 @@ static bool process_bones(const struct aiMesh* aiMesh, R3D_MeshData* data, int v
     for (unsigned int boneIndex = 0; boneIndex < aiMesh->mNumBones; boneIndex++)
     {
         const struct aiBone* bone = aiMesh->mBones[boneIndex];
+
+        int globalBoneIndex = r3d_importer_get_bone_index(importer, bone->mName.data);
+
+        if (globalBoneIndex < 0 || globalBoneIndex >= maxBoneCount)
+        {
+            R3D_TRACELOG(
+                LOG_ERROR,
+                "Invalid global bone index %d for bone '%s'",
+                globalBoneIndex,
+                bone->mName.data
+            );
+            return false;
+        }
 
         // Process all vertex weights for this bone
         for (unsigned int weightIndex = 0; weightIndex < bone->mNumWeights; weightIndex++)
@@ -235,7 +270,7 @@ static bool process_bones(const struct aiMesh* aiMesh, R3D_MeshData* data, int v
             uint8_t weightValue = (uint8_t)(weight->mWeight * 255.0f + 0.5f);
             if (weightValue == 0) continue;
 
-            assign_bone_weight(&data->vertices[vertexId], boneIndex, weightValue);
+            assign_bone_weight(&data->vertices[vertexId], (uint32_t)globalBoneIndex, weightValue);
         }
     }
 
@@ -289,6 +324,7 @@ static R3D_PrimitiveType get_primitive_type(unsigned int aiPrimitiveTypes)
 }
 
 static bool load_mesh_internal(
+    const R3D_Importer* importer,
     R3D_Mesh* outMesh,
     R3D_MeshData* outMeshData,
     R3D_MeshName* outMeshName,
@@ -348,7 +384,7 @@ static bool load_mesh_internal(
     process_indices(aiMesh, &data);
 
     // Process bone data
-    if (!process_bones(aiMesh, &data, vertexCount))
+    if (!process_bones(importer, aiMesh, &data, vertexCount))
     {
         R3D_UnloadMeshData(data);
         return false;
@@ -387,7 +423,7 @@ static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const
         R3D_MeshData* meshData = model->meshData ? &model->meshData[meshIndex] : NULL;
         R3D_MeshName* meshName = model->meshNames ? &model->meshNames[meshIndex] : NULL;
 
-        if (!load_mesh_internal(&model->meshes[meshIndex], meshData, meshName, mesh, globalTransform, mesh->mNumBones > 0))
+        if (!load_mesh_internal(importer, &model->meshes[meshIndex], meshData, meshName, mesh, globalTransform, mesh->mNumBones > 0))
         {
             R3D_TRACELOG(LOG_ERROR, "Unable to load mesh [%u]; The model will be invalid", meshIndex);
             return false;
