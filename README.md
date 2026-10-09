@@ -33,7 +33,7 @@ R3D is an extension library for <a href="https://www.raylib.com/">raylib</a> tha
 ## Requirements
 
 To build R3D, you must have:
-- **raylib 5.5+** (optionally provided as a submodule)
+- **raylib 6.0+** (optionally provided as a submodule)
 - **Assimp 6.0.2+** (optionally provided as a submodule)
 - **Python 3.6+** (used to process shaders during compilation)
 
