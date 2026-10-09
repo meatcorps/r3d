@@ -3,4 +3,5 @@
 	url = https://github.com/raysan5/raylib.git
 [submodule "external/assimp"]
 	path = external/assimp
-	url = https://github.com/assimp/assimp.git
+	url = https://github.com/meatcorps/assimp.git
+	branch = meatcorps/gltf-zero-accessor
