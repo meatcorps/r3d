@@ -176,6 +176,7 @@ if(R3D_RAYLIB_VENDORED)
     message(STATUS "Using vendored raylib from: ${R3D_RAYLIB_SUBMODULE_PATH}")
 
     set(CUSTOMIZE_BUILD ON CACHE BOOL "" FORCE)
+    set(SUPPORT_CUSTOM_FRAME_CONTROL OFF CACHE BOOL "" FORCE)
 
     # Enabled file formats
     set(_RAYLIB_ENABLED_FORMATS

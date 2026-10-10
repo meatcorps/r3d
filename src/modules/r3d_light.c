@@ -74,6 +74,12 @@ static r3d_light_shadow_array_t shadow_array_create(GLenum target, int size, int
 
     glGenFramebuffers(1, &arr.framebuffer);
 
+    // Depth-only framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, arr.framebuffer);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     return arr;
 }
 
