@@ -6,6 +6,20 @@
 #	define RESOURCES_PATH "./"
 #endif
 
+static bool get_attachment_world(const R3D_AnimationPlayer* player, int boneIndex, Matrix socketOffset, Matrix characterWorld, Matrix* outMatrix)
+{
+    if (!outMatrix) return false;
+
+    Matrix boneModel;
+
+    if (!R3D_GetAnimationBoneModelMatrix(player, boneIndex, &boneModel)) return false;
+
+    Matrix socketModel = MatrixMultiply(socketOffset, boneModel);
+    *outMatrix = MatrixMultiply(socketModel, characterWorld);
+
+    return true;
+}
+
 int main(void)
 {
     // Initialize window
@@ -38,6 +52,18 @@ int main(void)
     // Load animations
     R3D_AnimationLib modelAnims = R3D_LoadAnimationLib(RESOURCES_PATH "models/CesiumMan.glb");
     R3D_AnimationPlayer modelPlayer = R3D_LoadAnimationPlayer(model.skeleton, modelAnims);
+
+    // Print the available bone names once to identify the hand bone.
+    for (int i = 0; i < modelPlayer.skeleton.boneCount; i++)
+    {
+        TraceLog(LOG_INFO, "Bone %d: %s\n", i, modelPlayer.skeleton.bones[i].name);
+    }
+
+    // Replace the name with the actual right-hand bone from the output.
+    int handBone = modelPlayer.skeleton.boneCount > 0 ? 0 : -1;
+
+    R3D_Mesh flashlightMesh = R3D_GenMeshCube(0.4f, 0.4f, 0.4f);
+    Matrix flashlightOffset = MatrixTranslate(0.5f, 0.0f, 0.0f);
 
     // Setup animation playing
     R3D_SetAnimationLoop(&modelPlayer, 0, true);
@@ -93,6 +119,11 @@ int main(void)
 
         R3D_UpdateAnimationPlayer(&modelPlayer, updateDelta);
 
+        Matrix characterWorld = MatrixScale(1.25f, 1.25f, 1.25f);
+
+        Matrix flashlightWorld = MatrixIdentity();
+        bool hasFlashlight = get_attachment_world(&modelPlayer, handBone, flashlightOffset, characterWorld, &flashlightWorld);
+
         if (verifyOrder)
         {
             int boneCount = modelPlayer.skeleton.boneCount;
@@ -122,7 +153,12 @@ int main(void)
             R3D_Begin(camera);
                 R3D_PushLightEx(light, shadow, true);
                 R3D_DrawMesh(plane, R3D_MATERIAL_BASE, Vector3Zero(), 1.0f);
-                R3D_DrawAnimatedModel(model, modelPlayer, Vector3Zero(), 1.25f);
+                R3D_DrawAnimatedModelPro(model, modelPlayer, characterWorld);
+
+                if (hasFlashlight)
+                {
+                    R3D_DrawMeshPro(flashlightMesh, R3D_MATERIAL_BASE, flashlightWorld);
+                }
                 R3D_DrawAnimatedModelInstanced(model, modelPlayer, instances, 4);
             R3D_End();
 
@@ -134,6 +170,10 @@ int main(void)
             R3D_GetAnimationNormalizedTime(modelPlayer, 0)), 10, 35, 20, BLACK);
 
             DrawText("LEFT / RIGHT: Seek 0.25 seconds", 10, 60, 20, BLACK);
+            DrawText(
+                TextFormat("Bone: %d | Attachment: %s", handBone, hasFlashlight ? "YES" : "NO"),
+                10, 100, 20, hasFlashlight ? GREEN : RED
+            );
         EndDrawing();
     }
 
@@ -142,6 +182,7 @@ int main(void)
     R3D_UnloadAnimationLib(modelAnims);
     R3D_UnloadModel(model, true);
     R3D_UnloadMesh(plane);
+    R3D_UnloadMesh(flashlightMesh);
     R3D_Close();
 
     CloseWindow();
