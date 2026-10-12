@@ -1271,52 +1271,6 @@ static void atree_delete(R3D_AnimationTreeNode anode)
     }
 }
 
-static void atree_update(R3D_AnimationTree* atree, float elapsedTime,
-                         Transform* rootMotion, Transform* rootDistance)
-{
-    if (elapsedTime < 0.0f) return;
-
-    R3D_AnimationPlayer* player = &atree->player;
-    const int boneCount = player->skeleton.boneCount;
-
-    bool success = anode_update(atree, *atree->rootNode, elapsedTime, NULL);
-    if (!success) goto failure;
-
-    for (int boneIdx = 0; boneIdx < boneCount; boneIdx++)
-    {
-        const bool isRootBone = is_root_bone(atree, boneIdx);
-        rminfo_t rmInfo = {0};
-        Transform out = {0};
-
-        success = anode_eval(atree, *atree->rootNode, boneIdx, &out, isRootBone ? &rmInfo : NULL);
-        if (!success) goto failure;
-
-        if (isRootBone)
-        {
-            if (rootMotion) *rootMotion = rmInfo.motion;
-            if (rootDistance) *rootDistance = rmInfo.distance;
-            out = r3d_anim_transform_subtr(out, rmInfo.distance);
-        }
-
-        if (atree->updateCallback)
-        {
-            atree->updateCallback(player, boneIdx, &out, atree->updateUserData);
-        }
-
-        player->localPose[boneIdx] = r3d_matrix_srt_quat(out.scale, out.rotation, out.translation);
-    }
-
-    r3d_anim_matrices_compute(player);
-    R3D_UploadAnimationPose(player);
-    return;
-
-failure:
-    R3D_TRACELOG(LOG_ERROR, "Animation tree failed");
-    memcpy(player->localPose, player->skeleton.localBind, boneCount * sizeof(Matrix));
-    memcpy(player->modelPose, player->skeleton.modelBind, boneCount * sizeof(Matrix));
-    R3D_UploadAnimationPose(player);
-}
-
 static void atree_travel(r3d_animtree_stm_t* node, R3D_AnimationStmIndex targetIdx)
 {
     if (node->activeIdx == targetIdx) return;
@@ -1378,9 +1332,105 @@ void R3D_UpdateAnimationTree(R3D_AnimationTree* tree, float dt)
     R3D_UpdateAnimationTreeEx(tree, dt, NULL, NULL);
 }
 
+bool R3D_AdvanceAnimationTree(R3D_AnimationTree* tree, float dt)
+{
+    if (!tree || !tree->rootNode || !tree->rootNode->base) return false;
+    if (!isfinite(dt) || dt < 0.0f) return false;
+
+    return anode_update(tree, *tree->rootNode, dt, NULL);
+}
+
+bool R3D_ComputeAnimationTreeLocalPose(R3D_AnimationTree* tree)
+{
+    return R3D_ComputeAnimationTreeLocalPoseEx(tree, NULL, NULL);
+}
+
+bool R3D_ComputeAnimationTreeLocalPoseEx(R3D_AnimationTree* tree, Transform* rootMotion, Transform* rootDistance)
+{
+    if (!tree || !tree->rootNode || !tree->rootNode->base) return false;
+
+    R3D_AnimationPlayer* player = &tree->player;
+    const int boneCount = player->skeleton.boneCount;
+
+    if (boneCount <= 0 || !player->localPose || !player->skeleton.localBind) return false;
+
+    for (int boneIdx = 0; boneIdx < boneCount; boneIdx++)
+    {
+        const bool isRootBone = is_root_bone(tree, boneIdx);
+
+        rminfo_t rmInfo = {0};
+        Transform out = {0};
+
+        if (!anode_eval(tree, *tree->rootNode, boneIdx, &out, isRootBone ? &rmInfo : NULL))
+        {
+            R3D_TRACELOG(LOG_WARNING, "Failed to evaluate animation tree local pose");
+            return false;
+        }
+
+        if (isRootBone)
+        {
+            if (rootMotion) *rootMotion = rmInfo.motion;
+            if (rootDistance) *rootDistance = rmInfo.distance;
+
+            out = r3d_anim_transform_subtr(out, rmInfo.distance);
+        }
+
+        if (tree->updateCallback)
+        {
+            tree->updateCallback(player, boneIdx, &out, tree->updateUserData);
+        }
+
+        player->localPose[boneIdx] = r3d_matrix_srt_quat(out.scale, out.rotation, out.translation);
+    }
+
+    return true;
+}
+
+bool R3D_ComputeAnimationTreeModelPose(R3D_AnimationTree* tree)
+{
+    if (!tree) return false;
+
+    R3D_AnimationPlayer* player = &tree->player;
+
+    if (player->skeleton.boneCount <= 0 ||
+        !player->skeleton.bones ||
+        !player->localPose ||
+        !player->modelPose)
+    {
+        return false;
+    }
+
+    r3d_anim_matrices_compute(player);
+    return true;
+}
+
 void R3D_UpdateAnimationTreeEx(R3D_AnimationTree* tree, float dt, Transform* rootMotion, Transform* rootDistance)
 {
-    atree_update(tree, dt, rootMotion, rootDistance);
+    if (!tree || !isfinite(dt) || dt < 0.0f) return;
+
+    if (R3D_AdvanceAnimationTree(tree, dt) &&
+        R3D_ComputeAnimationTreeLocalPoseEx(tree, rootMotion, rootDistance) &&
+        R3D_ComputeAnimationTreeModelPose(tree))
+    {
+        R3D_UploadAnimationPose(&tree->player);
+        return;
+    }
+
+    R3D_TRACELOG(LOG_ERROR, "Animation tree failed");
+
+    R3D_AnimationPlayer* player = &tree->player;
+    const int boneCount = player->skeleton.boneCount;
+
+    if (boneCount <= 0 || !player->localPose || !player->modelPose ||
+        !player->skeleton.localBind || !player->skeleton.modelBind)
+    {
+        return;
+    }
+
+    memcpy(player->localPose, player->skeleton.localBind, boneCount * sizeof(Matrix));
+    memcpy(player->modelPose, player->skeleton.modelBind, boneCount * sizeof(Matrix));
+
+    R3D_UploadAnimationPose(player);
 }
 
 void R3D_AddRootAnimationNode(R3D_AnimationTree* tree, R3D_AnimationTreeNode* node)

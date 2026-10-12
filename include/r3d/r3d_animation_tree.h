@@ -223,6 +223,48 @@ R3DAPI void R3D_UnloadAnimationTree(R3D_AnimationTree tree);
 R3DAPI void R3D_UpdateAnimationTree(R3D_AnimationTree* tree, float dt);
 
 /**
+ * @brief Advances animation tree playback and transition states.
+ *
+ * Does not evaluate bone transforms or upload data to the GPU.
+ * A zero delta time is valid. Negative or non-finite values are rejected.
+ *
+ * @return True on success.
+ */
+R3DAPI bool R3D_AdvanceAnimationTree(R3D_AnimationTree* tree, float dt);
+
+/**
+ * @brief Evaluates the animation tree into player.localPose.
+ *
+ * Does not advance animation time, compute model-space matrices,
+ * or upload the pose to the GPU.
+ *
+ * @return True on success.
+ */
+R3DAPI bool R3D_ComputeAnimationTreeLocalPose(R3D_AnimationTree* tree);
+
+/**
+ * @brief Evaluates the local pose and optionally extracts root motion.
+ *
+ * Root-motion state is updated during sampling. Normally this should
+ * be called once after each animation tree advance.
+ *
+ * @return True on success.
+ */
+R3DAPI bool R3D_ComputeAnimationTreeLocalPoseEx(R3D_AnimationTree* tree, Transform* rootMotion, Transform* rootDistance);
+
+/**
+ * @brief Computes model-space bone matrices from player.localPose.
+ *
+ * Allows the caller to modify local matrices after tree evaluation
+ * and before computing the final model-space pose.
+ *
+ * Does not advance animation time or upload to the GPU.
+ *
+ * @return True on success.
+ */
+R3DAPI bool R3D_ComputeAnimationTreeModelPose(R3D_AnimationTree* tree);
+
+/**
  * @brief Updates the animation tree: calculates blended pose, sets and uploads the pose through associated animation player.
  *
  * Set the rootMotion and/or rootDistance pointers to get root motion information.
