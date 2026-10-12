@@ -782,11 +782,11 @@ static bool anode_eval_anim(const R3D_AnimationTree* atree, r3d_animtree_anim_t*
 
     if (channel)
     {
-        *out = r3d_anim_channel_lerp(channel, state.currentTime * anim->ticksPerSecond, NULL, NULL);
+        *out = r3d_anim_channel_lerp(channel, state.currentTime * anim->ticksPerSecond, &atree->player.skeleton.localBind[boneIdx], NULL, NULL);
     }
     else
     {
-        MatrixDecompose(atree->player.skeleton.localBind[boneIdx], &out->translation, &out->rotation, &out->scale);
+        r3d_matrix_decompose(atree->player.skeleton.localBind[boneIdx], &out->translation, &out->rotation, &out->scale);
     }
 
     if (node->params.evalCallback)
@@ -1094,15 +1094,12 @@ static R3D_AnimationTreeNode* atree_anim_create(R3D_AnimationTree* atree, R3D_An
         const R3D_AnimationChannel* c = r3d_anim_channel_find(a, boneIdx);
         if (c != NULL)
         {
-            anim->root.last = r3d_anim_channel_lerp(
-                c, s->currentTime * a->ticksPerSecond,
-                &anim->root.rest0, &anim->root.restN
-            );
+            anim->root.last = r3d_anim_channel_lerp(c, s->currentTime * a->ticksPerSecond, &atree->player.skeleton.localBind[boneIdx], &anim->root.rest0, &anim->root.restN);
         }
         else
         {
             Transform bind;
-            MatrixDecompose(
+            r3d_matrix_decompose(
                 atree->player.skeleton.localBind[boneIdx],
                 &bind.translation, &bind.rotation, &bind.scale
             );
@@ -1583,7 +1580,7 @@ void R3D_SetAnimationNodeTimeSeconds(R3D_AnimationTree* tree, R3D_AnimationTreeN
 
         if (channel)
         {
-            animNode->root.last = r3d_anim_channel_lerp(channel, time * anim->ticksPerSecond, NULL, NULL);
+            animNode->root.last = r3d_anim_channel_lerp(channel, time * anim->ticksPerSecond, &tree->player.skeleton.localBind[rootBone], NULL, NULL);
         }
     }
 }

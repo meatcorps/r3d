@@ -150,7 +150,7 @@ const R3D_AnimationChannel* r3d_anim_channel_find(const R3D_Animation* anim, int
     return NULL;
 }
 
-Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time, Transform* rest0, Transform* restN)
+Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time, const Matrix* localBind, Transform* rest0, Transform* restN)
 {
     Transform result = {
         .translation = {0.0f, 0.0f, 0.0f},
@@ -158,19 +158,28 @@ Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time,
         .scale = {1.0f, 1.0f, 1.0f}
     };
 
+    // Only decompose the bind pose when a track is missing.
+    if (channel->translation.count == 0 || channel->rotation.count == 0 || channel->scale.count == 0)
+    {
+        r3d_matrix_decompose(*localBind, &result.translation, &result.rotation, &result.scale);
+    }
+
+    // Initialize root-motion endpoints with the complete fallback pose.
+    if (rest0) *rest0 = result;
+    if (restN) *restN = result;
+
     if (channel->translation.count > 0)
     {
         const Vector3* values = (const Vector3*)channel->translation.values;
         uint32_t i0, i1;
         float t;
-        find_key_frames(
-            channel->translation.times,
-            channel->translation.count,
-            time, &i0, &i1, &t
-        );
+
+        find_key_frames(channel->translation.times, channel->translation.count, time, &i0, &i1, &t);
+
         result.translation = Vector3Lerp(values[i0], values[i1], t);
+
         if (rest0) rest0->translation = values[0];
-        if (restN) restN->translation = values[channel->translation.count-1];
+        if (restN) restN->translation = values[channel->translation.count - 1];
     }
 
     if (channel->rotation.count > 0)
@@ -178,14 +187,13 @@ Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time,
         const Quaternion* values = (const Quaternion*)channel->rotation.values;
         uint32_t i0, i1;
         float t;
-        find_key_frames(
-            channel->rotation.times,
-            channel->rotation.count,
-            time, &i0, &i1, &t
-        );
+
+        find_key_frames(channel->rotation.times, channel->rotation.count, time, &i0, &i1, &t);
+
         result.rotation = QuaternionSlerp(values[i0], values[i1], t);
+
         if (rest0) rest0->rotation = values[0];
-        if (restN) restN->rotation = values[channel->rotation.count-1];
+        if (restN) restN->rotation = values[channel->rotation.count - 1];
     }
 
     if (channel->scale.count > 0)
@@ -193,14 +201,13 @@ Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time,
         const Vector3* values = (const Vector3*)channel->scale.values;
         uint32_t i0, i1;
         float t;
-        find_key_frames(
-            channel->scale.times,
-            channel->scale.count,
-            time, &i0, &i1, &t
-        );
+
+        find_key_frames(channel->scale.times, channel->scale.count, time, &i0, &i1, &t);
+
         result.scale = Vector3Lerp(values[i0], values[i1], t);
+
         if (rest0) rest0->scale = values[0];
-        if (restN) restN->scale = values[channel->scale.count-1];
+        if (restN) restN->scale = values[channel->scale.count - 1];
     }
 
     return result;

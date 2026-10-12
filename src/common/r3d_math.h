@@ -320,6 +320,79 @@ static inline Matrix r3d_matrix_srt_quat(Vector3 scale, Quaternion quat, Vector3
     };
 }
 
+static inline void r3d_matrix_decompose(Matrix matrix, Vector3* translation, Quaternion* rotation, Vector3* scale)
+{
+    const float epsilon = 1e-8f;
+
+    *translation = (Vector3) {matrix.m12, matrix.m13, matrix.m14};
+
+    // R3D uses column vectors: each column contains one scaled local axis.
+    Vector3 xAxis = {matrix.m0, matrix.m1, matrix.m2};
+    Vector3 yAxis = {matrix.m4, matrix.m5, matrix.m6};
+    Vector3 zAxis = {matrix.m8, matrix.m9, matrix.m10};
+
+    Vector3 lengths = {
+        Vector3Length(xAxis),
+        Vector3Length(yAxis),
+        Vector3Length(zAxis)
+    };
+
+    // A collapsed axis cannot define a unique rotation.
+    if (lengths.x <= epsilon || lengths.y <= epsilon || lengths.z <= epsilon)
+    {
+        *rotation = QuaternionIdentity();
+        *scale = lengths;
+        return;
+    }
+
+    float sx = lengths.x;
+    xAxis = Vector3Scale(xAxis, 1.0f / sx);
+
+    // Remove any XY shear.
+    yAxis = Vector3Subtract(yAxis, Vector3Scale(xAxis, Vector3DotProduct(xAxis, yAxis)));
+
+    float sy = Vector3Length(yAxis);
+    if (sy <= epsilon)
+    {
+        *rotation = QuaternionIdentity();
+        *scale = lengths;
+        return;
+    }
+
+    yAxis = Vector3Scale(yAxis, 1.0f / sy);
+
+    // Remove any XZ and YZ shear.
+    zAxis = Vector3Subtract(zAxis, Vector3Scale(xAxis, Vector3DotProduct(xAxis, zAxis)));
+    zAxis = Vector3Subtract(zAxis, Vector3Scale(yAxis, Vector3DotProduct(yAxis, zAxis)));
+
+    float sz = Vector3Length(zAxis);
+    if (sz <= epsilon)
+    {
+        *rotation = QuaternionIdentity();
+        *scale = lengths;
+        return;
+    }
+
+    zAxis = Vector3Scale(zAxis, 1.0f / sz);
+
+    // Keep the rotation right-handed when the matrix contains a reflection.
+    if (Vector3DotProduct(xAxis, Vector3CrossProduct(yAxis, zAxis)) < 0.0f)
+    {
+        sx = -sx;
+        xAxis = Vector3Negate(xAxis);
+    }
+
+    Matrix rotationMatrix = {
+        xAxis.x, yAxis.x, zAxis.x, 0.0f,
+        xAxis.y, yAxis.y, zAxis.y, 0.0f,
+        xAxis.z, yAxis.z, zAxis.z, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
+
+    *rotation = QuaternionNormalize(QuaternionFromMatrix(rotationMatrix));
+    *scale = (Vector3) {sx, sy, sz};
+}
+
 static inline Matrix r3d_matrix_normal(const Matrix* transform)
 {
     Matrix result = {0};

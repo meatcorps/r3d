@@ -373,7 +373,7 @@ void compute_local_matrices(R3D_AnimationPlayer* player)
             localPose[iBone] = player->skeleton.localBind[iBone];
             continue;
         }
-        Transform local = r3d_anim_channel_lerp(channel, tick, NULL, NULL);
+        Transform local = r3d_anim_channel_lerp(channel, tick, &player->skeleton.localBind[iBone], NULL, NULL);
         localPose[iBone] = r3d_matrix_srt_quat(local.scale, QuaternionNormalize(local.rotation), local.translation);
     }
 }

@@ -30,6 +30,6 @@ void r3d_anim_matrices_compute(R3D_AnimationPlayer* player);
 // ========================================
 
 const R3D_AnimationChannel* r3d_anim_channel_find(const R3D_Animation* anim, int boneIdx);
-Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time, Transform* rest0, Transform* restN);
+Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time, const Matrix* localBind, Transform* rest0, Transform* restN);
 
 #endif // R3D_COMMON_ANIM_H
