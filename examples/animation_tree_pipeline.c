@@ -14,6 +14,36 @@ static bool near(float a, float b)
     return fabsf(a - b) < 0.0001f;
 }
 
+static int check_root_motion_case(R3D_AnimationTree* tree, R3D_AnimationTreeNode* node, const char* name, float startTime, float speed, float dt, float expectedTime, float expectedMotion, float expectedDistance)
+{
+    R3D_AnimationNodeParams params = R3D_GetAnimationNodeParams(node);
+
+    params.state.play = true;
+    params.state.loop = true;
+    params.state.speed = speed;
+
+    R3D_SetAnimationNodeParams(node, params);
+    R3D_SetAnimationNodeTimeSeconds(tree, node, startTime);
+
+    Transform motion = {0};
+    Transform distance = {0};
+
+    bool success = R3D_AdvanceAnimationTree(tree, dt);
+
+    if (success)
+    {
+        success = R3D_ComputeAnimationTreeLocalPoseEx(tree, &motion, &distance);
+    }
+
+    bool passed = success &&
+        near(R3D_GetAnimationNodeTimeSeconds(node), expectedTime) &&
+        near(motion.translation.x, expectedMotion) &&
+        near(distance.translation.x, expectedDistance) &&
+        near(tree->player.localPose[0].m12, 0.0f);
+
+    return check(name, passed);
+}
+
 int main(void)
 {
     const float times[] = {0.0f, 1.0f};
@@ -159,6 +189,13 @@ int main(void)
     failures += check("Evaluate second frame", R3D_ComputeAnimationTreeLocalPoseEx(&rootTree, &motion, &distance));
     failures += check("Second root-motion delta", near(motion.translation.x, 0.5f));
     failures += check("Accumulated root distance", near(distance.translation.x, 1.0f));
+
+    failures += check_root_motion_case(&rootTree, rootNode, "Forward loop crossing", 0.75f, 1.0f, 0.5f, 0.25f, 1.0f, 0.5f);
+    failures += check_root_motion_case(&rootTree, rootNode, "Reverse loop crossing", 0.25f, -1.0f, 0.5f, 0.75f, -1.0f, 1.5f);
+    failures += check_root_motion_case(&rootTree, rootNode, "Forward multi-loop", 0.0f, 1.0f, 3.25f, 0.25f, 6.5f, 0.5f);
+    failures += check_root_motion_case(&rootTree, rootNode, "Reverse multi-loop", 1.0f, -1.0f, 3.25f, 0.75f, -6.5f, 1.5f);
+    failures += check_root_motion_case(&rootTree, rootNode, "Forward exact boundary", 0.75f, 1.0f, 0.25f, 0.0f, 0.5f, 0.0f);
+    failures += check_root_motion_case(&rootTree, rootNode, "Reverse exact boundary", 0.25f, -1.0f, 0.25f, 1.0f, -0.5f, 2.0f);
 
     R3D_UnloadAnimationTree(rootTree);
 
