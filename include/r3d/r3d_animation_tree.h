@@ -255,6 +255,27 @@ R3DAPI void R3D_AddRootAnimationNode(R3D_AnimationTree* tree, R3D_AnimationTreeN
 R3DAPI bool R3D_AddAnimationNode(R3D_AnimationTreeNode* parent, R3D_AnimationTreeNode* node, int inputIndex);
 
 /**
+ * @brief Gets a child node by index.
+ *
+ * Supports Blend2, Add2, Switch, State Machine and StmX nodes.
+ * For State Machines, the index refers to a state.
+ *
+ * @return Pointer to the child node, or NULL if unavailable.
+ */
+R3DAPI R3D_AnimationTreeNode* R3D_GetAnimationNode(R3D_AnimationTreeNode* parent, int inputIndex);
+
+/**
+ * @brief Gets the selected animation leaf within a node hierarchy.
+ *
+ * Traverses Switch, State Machine and StmX nodes.
+ * During crossfades, returns the selected destination branch.
+ * Returns NULL for Blend2/Add2 nodes because multiple animations contribute.
+ *
+ * @return Pointer to the selected animation leaf, or NULL.
+ */
+R3DAPI R3D_AnimationTreeNode* R3D_GetActiveAnimationNode(R3D_AnimationTreeNode* node);
+
+/**
  * @brief Creates animation node of type Animation.
  *
  * Animation is a leaf node, holding the R3D_Animation structure.
@@ -393,6 +414,33 @@ R3DAPI void R3D_SetAnimationNodeParams(R3D_AnimationTreeNode* node,
  * @return Current parameters.
  */
 R3DAPI R3D_AnimationNodeParams R3D_GetAnimationNodeParams(R3D_AnimationTreeNode* node);
+
+/**
+ * @brief Gets the current time of an AnimationTree animation leaf in seconds.
+ * @return Current time in seconds, or 0 for an invalid/non-animation node.
+ */
+R3DAPI float R3D_GetAnimationNodeTimeSeconds(const R3D_AnimationTreeNode* node);
+
+/**
+ * @brief Gets the duration of an AnimationTree animation leaf in seconds.
+ * @return Duration in seconds, or 0 for an invalid/non-animation node.
+ */
+R3DAPI float R3D_GetAnimationNodeDurationSeconds(const R3D_AnimationTreeNode* node);
+
+/**
+ * @brief Gets the normalized playback time of an AnimationTree animation leaf.
+ * @return Position in [0, 1], or 0 for an invalid/non-animation node.
+ */
+R3DAPI float R3D_GetAnimationNodeNormalizedTime(const R3D_AnimationTreeNode* node);
+
+/**
+ * @brief Seeks an AnimationTree animation leaf to a time in seconds.
+ *
+ * Clamps the requested time and resets the root-motion reference so that
+ * seeking itself does not produce an artificial root-motion delta.
+ * Does not evaluate or upload the resulting pose.
+ */
+R3DAPI void R3D_SetAnimationNodeTimeSeconds(R3D_AnimationTree* tree, R3D_AnimationTreeNode* node, float timeSeconds);
 
 /**
  * @brief Sets parameters of animation node Blend2.

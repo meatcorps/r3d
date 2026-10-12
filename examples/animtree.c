@@ -139,10 +139,48 @@ int main(void)
         if (IsKeyDown(KEY_ONE))   switchParams.activeInput = 0;
         if (IsKeyDown(KEY_TWO))   switchParams.activeInput = 1;
         if (IsKeyDown(KEY_THREE)) switchParams.activeInput = 2;
+
+        R3D_AnimationTreeNode* activeNode = R3D_GetActiveAnimationNode(switchNode);
+
+        if (IsKeyPressed(KEY_R))
+        {
+            R3D_AnimationNodeParams params = R3D_GetAnimationNodeParams(activeNode);
+            params.state.speed = params.state.speed < 0.0f ? 1.0f : -1.0f;
+
+            R3D_SetAnimationNodeParams(activeNode, params);
+            R3D_SetAnimationNodeTimeSeconds(&animTree, activeNode, params.state.speed < 0.0f ? R3D_GetAnimationNodeDurationSeconds(activeNode) : 0.0f);
+        }
+
+        float updateDelta = delta;
+
+        if (IsKeyPressed(KEY_L))
+        {
+            R3D_AnimationNodeParams params = R3D_GetAnimationNodeParams(activeNode);
+            float duration = R3D_GetAnimationNodeDurationSeconds(activeNode);
+
+            R3D_SetAnimationNodeTimeSeconds(&animTree, activeNode, params.state.speed < 0.0f ? duration : 0.0f);
+            updateDelta = duration * 3.25f;
+        }
+
         R3D_SetSwitchNodeParams(switchNode, switchParams);
 
         UpdateCamera(&camera, CAMERA_ORBITAL);
-        R3D_UpdateAnimationTree(&animTree, delta);
+        R3D_UpdateAnimationTree(&animTree, updateDelta);
+
+        if (activeNode)
+        {
+            float time = R3D_GetAnimationNodeTimeSeconds(activeNode);
+
+            if (IsKeyPressed(KEY_RIGHT))
+            {
+                R3D_SetAnimationNodeTimeSeconds(&animTree, activeNode, time + 0.25f);
+            }
+
+            if (IsKeyPressed(KEY_LEFT))
+            {
+                R3D_SetAnimationNodeTimeSeconds(&animTree, activeNode, time - 0.25f);
+            }
+        }
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
@@ -151,9 +189,15 @@ int main(void)
                 R3D_DrawMesh(plane, R3D_MATERIAL_BASE, Vector3Zero(), 1.0f);
                 R3D_DrawAnimatedModel(model, modelPlayer, Vector3Zero(), 1.0f);
             R3D_End();
-            DrawText("Press '1' to idle",                       10, GetScreenHeight()-74, 20, BLACK);
-            DrawText("Press '2' to walk left and right",        10, GetScreenHeight()-54, 20, BLACK);
-            DrawText("Press '3' to walk forward and backward",  10, GetScreenHeight()-34, 20, BLACK);
+            DrawText("Press 'L'/'R' for forward / reverse animation",  10, GetScreenHeight()-94, 20, BLACK);
+            DrawText("Press '1' to idle",                         10, GetScreenHeight()-74, 20, BLACK);
+            DrawText("Press '2' to walk left and right",          10, GetScreenHeight()-54, 20, BLACK);
+            DrawText("Press '3' to walk forward and backward",    10, GetScreenHeight()-34, 20, BLACK);
+            if (activeNode)
+            {
+                R3D_AnimationNodeParams activeParams = R3D_GetAnimationNodeParams(activeNode);
+                DrawText(TextFormat("Active (%s): %.1f / %.1f (%.1f%%)", activeParams.name, R3D_GetAnimationNodeTimeSeconds(activeNode), R3D_GetAnimationNodeDurationSeconds(activeNode), R3D_GetAnimationNodeNormalizedTime(activeNode) * 100.0f), 10, 10, 20, BLACK);
+            }
         EndDrawing();
     }
 

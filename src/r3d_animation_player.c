@@ -10,6 +10,7 @@
 #include <r3d_config.h>
 #include <raymath.h>
 #include <glad.h>
+#include <math.h>
 
 #include "./common/r3d_helper.h"
 #include "./common/r3d_anim.h"
@@ -152,12 +153,50 @@ float R3D_GetAnimationTime(R3D_AnimationPlayer player, int animIndex)
 
 void R3D_SetAnimationTime(R3D_AnimationPlayer* player, int animIndex, float time)
 {
-    if (!is_anim_index_valid(player, animIndex)) return;
+    if (!is_anim_index_valid(player, animIndex) || !isfinite(time)) return;
 
-    const R3D_Animation* anim = &player->animLib.animations[animIndex];
-    float duration = anim->duration / anim->ticksPerSecond;
+    float duration = R3D_GetAnimationDurationSeconds(*player, animIndex);
+    if (duration <= 0.0f)
+    {
+        player->states[animIndex].currentTime = 0.0f;
+        return;
+    }
 
     player->states[animIndex].currentTime = Wrap(time, 0.0f, duration);
+}
+
+float R3D_GetAnimationTimeSeconds(R3D_AnimationPlayer player, int animIndex)
+{
+    return R3D_GetAnimationTime(player, animIndex);
+}
+
+float R3D_GetAnimationDurationSeconds(R3D_AnimationPlayer player, int animIndex)
+{
+    if (!is_anim_index_valid(&player, animIndex)) return 0.0f;
+
+    const R3D_Animation* anim = &player.animLib.animations[animIndex];
+
+    if (!isfinite(anim->duration) || !isfinite(anim->ticksPerSecond)) return 0.0f;
+    if (anim->duration <= 0.0f || anim->ticksPerSecond <= 0.0f) return 0.0f;
+
+    return anim->duration / anim->ticksPerSecond;
+}
+
+float R3D_GetAnimationNormalizedTime(R3D_AnimationPlayer player, int animIndex)
+{
+    float duration = R3D_GetAnimationDurationSeconds(player, animIndex);
+    if (duration <= 0.0f) return 0.0f;
+
+    float time = R3D_GetAnimationTimeSeconds(player, animIndex);
+    return Clamp(time / duration, 0.0f, 1.0f);
+}
+
+void R3D_SetAnimationTimeSeconds(R3D_AnimationPlayer* player, int animIndex, float timeSeconds)
+{
+    if (!is_anim_index_valid(player, animIndex) || !isfinite(timeSeconds)) return;
+
+    float duration = R3D_GetAnimationDurationSeconds(*player, animIndex);
+    player->states[animIndex].currentTime = Clamp(timeSeconds, 0.0f, duration);
 }
 
 float R3D_GetAnimationSpeed(R3D_AnimationPlayer player, int animIndex)
@@ -196,30 +235,50 @@ void R3D_SetAnimationLoop(R3D_AnimationPlayer* player, int animIndex, bool loop)
 
 void R3D_AdvanceAnimationTime(R3D_AnimationPlayer* player, float dt)
 {
+    if (!player || !isfinite(dt) || dt <= 0.0f) return;
+
     int animIndex = player->activeAnimIndex;
     if (!is_anim_index_valid(player, animIndex)) return;
 
     R3D_AnimationState* state = &player->states[animIndex];
-    if (!state->play) return;
+    if (!state->play || !isfinite(state->speed) || state->speed == 0.0f) return;
 
-    state->currentTime += state->speed * dt;
-
-    const R3D_Animation* anim = &player->animLib.animations[animIndex];
-    float duration = anim->duration / anim->ticksPerSecond;
-
-    if ((state->speed > 0.0f && state->currentTime >= duration) || (state->speed < 0.0f && state->currentTime <= 0.0f))
+    float duration = R3D_GetAnimationDurationSeconds(*player, animIndex);
+    if (duration <= 0.0f)
     {
-        if ((state->play = state->loop))
-        {
-            emit_event(player, R3D_ANIM_EVENT_LOOPED, animIndex);
-            state->currentTime -= copysignf(duration, state->speed);
-        }
-        else
-        {
-            emit_event(player, R3D_ANIM_EVENT_FINISHED, animIndex);
-            state->currentTime = Clamp(state->currentTime, 0.0f, duration);
-        }
+        state->currentTime = 0.0f;
+        state->play = false;
+        emit_event(player, R3D_ANIM_EVENT_FINISHED, animIndex);
+        return;
     }
+
+    double nextTime = (double)state->currentTime + (double)state->speed * dt;
+
+    bool crossed = (state->speed > 0.0f && nextTime >= duration) ||
+                   (state->speed < 0.0f && nextTime <= 0.0);
+
+    if (!crossed)
+    {
+        state->currentTime = (float)nextTime;
+        return;
+    }
+
+    if (!state->loop)
+    {
+        state->currentTime = Clamp((float)nextTime, 0.0f, duration);
+        state->play = false;
+        emit_event(player, R3D_ANIM_EVENT_FINISHED, animIndex);
+        return;
+    }
+
+    double wrappedTime = fmod(nextTime, (double)duration);
+    if (wrappedTime < 0.0) wrappedTime += duration;
+
+    // Reverse playback wraps to the end at an exact boundary.
+    if (state->speed < 0.0f && wrappedTime == 0.0) wrappedTime = duration;
+
+    state->currentTime = (float)wrappedTime;
+    emit_event(player, R3D_ANIM_EVENT_LOOPED, animIndex);
 }
 
 void R3D_ComputeAnimationLocalPose(R3D_AnimationPlayer* player)
@@ -291,10 +350,9 @@ void reset_anim_time(R3D_AnimationPlayer* player, int animIndex)
     R3D_ASSERT(is_anim_index_valid(player, animIndex));
 
     R3D_AnimationState* state = &player->states[animIndex];
-    const R3D_Animation* anim = &player->animLib.animations[animIndex];
+    float duration = R3D_GetAnimationDurationSeconds(*player, animIndex);
 
-    state->currentTime = (state->speed >= 0.0f)
-        ? 0.0f : anim->duration / anim->ticksPerSecond;
+    state->currentTime = (state->speed >= 0.0f) ? 0.0f : duration;
 }
 
 void compute_local_matrices(R3D_AnimationPlayer* player)

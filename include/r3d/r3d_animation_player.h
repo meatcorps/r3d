@@ -66,7 +66,7 @@ typedef void (*R3D_AnimationEventCallback)(
  * Tracks the current time, speed, play/pause state, and looping behavior.
  */
 typedef struct R3D_AnimationState {
-    float currentTime;  ///< Current playback time in animation ticks.
+    float currentTime;  ///< Current playback time in seconds.
     float speed;        ///< Playback speed; can be negative for reverse playback.
     bool play;          ///< Whether the animation is currently playing.
     bool loop;          ///< True to enable looping playback.
@@ -189,6 +189,33 @@ R3DAPI float R3D_GetAnimationTime(R3D_AnimationPlayer player, int animIndex);
  * @param time Time in animation ticks.
  */
 R3DAPI void R3D_SetAnimationTime(R3D_AnimationPlayer* player, int animIndex, float time);
+
+/**
+ * @brief Gets the current playback time in seconds.
+ * @return Current time in seconds, or 0 for an invalid animation index.
+ */
+R3DAPI float R3D_GetAnimationTimeSeconds(R3D_AnimationPlayer player, int animIndex);
+
+/**
+ * @brief Gets the total animation duration in seconds.
+ * @return Duration in seconds, or 0 for an invalid animation.
+ */
+R3DAPI float R3D_GetAnimationDurationSeconds(R3D_AnimationPlayer player, int animIndex);
+
+/**
+ * @brief Gets the normalized playback position.
+ * @return Playback position in the range [0, 1], or 0 for an invalid animation.
+ */
+R3DAPI float R3D_GetAnimationNormalizedTime(R3D_AnimationPlayer player, int animIndex);
+
+/**
+ * @brief Sets playback time in seconds, clamped to the animation duration.
+ *
+ * Unlike the existing R3D_SetAnimationTime, this function does not wrap.
+ * Useful for editor scrubbing, including seeking to the final frame.
+ * Does not advance time or update the skeleton pose.
+ */
+R3DAPI void R3D_SetAnimationTimeSeconds(R3D_AnimationPlayer* player, int animIndex, float timeSeconds);
 
 /**
  * @brief Gets the playback speed of an animation.

@@ -74,6 +74,18 @@ int main(void)
     {
         float delta = GetFrameTime();
 
+        if (IsKeyPressed(KEY_RIGHT))
+        {
+            float time = R3D_GetAnimationTimeSeconds(modelPlayer, 0);
+            R3D_SetAnimationTimeSeconds(&modelPlayer, 0, time + 0.25f);
+        }
+
+        if (IsKeyPressed(KEY_LEFT))
+        {
+            float time = R3D_GetAnimationTimeSeconds(modelPlayer, 0);
+            R3D_SetAnimationTimeSeconds(&modelPlayer, 0, time - 0.25f);
+        }
+
         UpdateCamera(&camera, CAMERA_ORBITAL);
         R3D_UpdateAnimationPlayer(&modelPlayer, delta);
 
@@ -85,6 +97,15 @@ int main(void)
                 R3D_DrawAnimatedModel(model, modelPlayer, Vector3Zero(), 1.25f);
                 R3D_DrawAnimatedModelInstanced(model, modelPlayer, instances, 4);
             R3D_End();
+
+            DrawText(TextFormat("Time: %.3f / %.3f seconds",
+            R3D_GetAnimationTimeSeconds(modelPlayer, 0),
+            R3D_GetAnimationDurationSeconds(modelPlayer, 0)), 10, 10, 20, BLACK);
+
+            DrawText(TextFormat("Normalized: %.3f",
+            R3D_GetAnimationNormalizedTime(modelPlayer, 0)), 10, 35, 20, BLACK);
+
+            DrawText("LEFT / RIGHT: Seek 0.25 seconds", 10, 60, 20, BLACK);
         EndDrawing();
     }
 

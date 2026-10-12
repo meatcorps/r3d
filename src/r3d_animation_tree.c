@@ -9,6 +9,8 @@
 #include <r3d/r3d_animation_tree.h>
 #include <r3d_config.h>
 #include <string.h>
+#include <math.h>
+#include <limits.h>
 
 #include "./common/r3d_helper.h"
 #include "./common/r3d_anim.h"
@@ -519,10 +521,12 @@ static void anode_reset(R3D_AnimationTreeNode anode)
 static bool anode_update_anim(r3d_animtree_anim_t* node, float elapsedTime, upinfo_t* info)
 {
     const R3D_Animation* a = node->animation;
-
     R3D_AnimationState* s = &node->params.state;
+
     if (!s->play)
     {
+        node->root.loops = -1;
+
         if (info)
         {
             *info = (upinfo_t) {
@@ -535,39 +539,76 @@ static bool anode_update_anim(r3d_animtree_anim_t* node, float elapsedTime, upin
     }
 
     float speed = s->speed;
-    float duration = a->duration / a->ticksPerSecond;
-    float tInc = speed * elapsedTime;
-    float tCur = s->currentTime + tInc;
+    if (!isfinite(speed) || !isfinite(elapsedTime)) return false;
 
-    s->currentTime = tCur;
+    float duration = (a->ticksPerSecond > 0.0f) ? a->duration / a->ticksPerSecond : 0.0f;
 
-    bool cross = ((speed < 0.0f && tCur <= 0.0f) || (speed > 0.0f && tCur >= duration));
+    if (!isfinite(duration) || duration <= 0.0f)
+    {
+        s->currentTime = 0.0f;
+        s->play = false;
+        node->root.loops = -1;
+
+        if (info)
+        {
+            *info = (upinfo_t) {
+                .anodeDone = true,
+                .xFade = info->xFade,
+                .consumedTime = 0.0f
+            };
+        }
+        return true;
+    }
+
+    double nextTime = (double)s->currentTime + (double)speed * elapsedTime;
+
+    bool cross = elapsedTime > 0.0f &&
+                 ((speed < 0.0f && nextTime <= 0.0) ||
+                  (speed > 0.0f && nextTime >= duration));
+
+    node->root.loops = -1;
 
     if (cross)
     {
-        if ((s->play = s->loop))
+        if (s->loop)
         {
-            s->currentTime -= copysignf(duration, speed);
+            double crossings = (speed > 0.0f)
+                ? floor(nextTime / duration)
+                : floor(-nextTime / duration) + 1.0;
+
+            double wrappedTime = fmod(nextTime, (double)duration);
+            if (wrappedTime < 0.0) wrappedTime += duration;
+            if (speed < 0.0f && wrappedTime == 0.0) wrappedTime = duration;
+
+            s->currentTime = (float)wrappedTime;
+
+            // The first crossing is handled by the root-motion split.
+            // Additional complete cycles are accumulated separately.
+            node->root.loops = (crossings >= INT_MAX) ? INT_MAX - 1 : (int)crossings - 1;
         }
         else
         {
-            float tClamp = R3D_CLAMP(s->currentTime, 0.0f, duration);
-            float tDelta = s->currentTime - tClamp;
-            elapsedTime = (!FloatEquals(tInc, 0.0f) ? elapsedTime * (1.0f - tDelta/tInc) : 0.0f);
-            s->currentTime = tClamp;
+            double boundaryTime = (speed > 0.0f)
+                ? ((double)duration - s->currentTime) / speed
+                : (double)s->currentTime / -speed;
+
+            elapsedTime = R3D_CLAMP((float)boundaryTime, 0.0f, elapsedTime);
+            s->currentTime = R3D_CLAMP((float)nextTime, 0.0f, duration);
+            s->play = false;
         }
-        node->root.loops = (int)(elapsedTime / duration);
     }
     else
     {
-        node->root.loops = -1;
+        s->currentTime = (float)nextTime;
     }
 
     if (info)
     {
         float xFade = info->xFade * fabsf(speed);
         float durXFade = R3D_CLAMP(duration - xFade, 0.0f, duration);
-        bool crossXFade = ((speed < 0.0f && tCur <= xFade) || (speed > 0.0f && tCur >= durXFade));
+        bool crossXFade = (speed < 0.0f && nextTime <= xFade) ||
+                          (speed > 0.0f && nextTime >= durXFade);
+
         *info = (upinfo_t) {
             .anodeDone = crossXFade ? node->params.looper : false,
             .xFade = xFade,
@@ -762,10 +803,11 @@ static bool anode_eval_anim(const R3D_AnimationTree* atree, r3d_animtree_anim_t*
 
             if (loops > 0)
             {
-                motion = r3d_anim_transform_scale(
-                    r3d_anim_transform_subtr(node->root.restN, node->root.rest0),
-                    (float)loops
-                );
+                Transform cycle = (state.speed >= 0.0f)
+                    ? r3d_anim_transform_subtr(node->root.restN, node->root.rest0)
+                    : r3d_anim_transform_subtr(node->root.rest0, node->root.restN);
+
+                motion = r3d_anim_transform_scale(cycle, (float)loops);
             }
 
             if (loops >= 0)
@@ -1360,6 +1402,76 @@ bool R3D_AddAnimationNode(R3D_AnimationTreeNode* parent, R3D_AnimationTreeNode* 
     return false;
 }
 
+R3D_AnimationTreeNode* R3D_GetAnimationNode(R3D_AnimationTreeNode* parent, int inputIndex)
+{
+    if (!parent || !parent->base || inputIndex < 0) return NULL;
+
+    switch (parent->base->type)
+    {
+        case R3D_ANIMTREE_BLEND2:
+            if (inputIndex == 0 && parent->bln2->inMain.base) return &parent->bln2->inMain;
+            if (inputIndex == 1 && parent->bln2->inBlend.base) return &parent->bln2->inBlend;
+            break;
+
+        case R3D_ANIMTREE_ADD2:
+            if (inputIndex == 0 && parent->add2->inMain.base) return &parent->add2->inMain;
+            if (inputIndex == 1 && parent->add2->inAdd.base) return &parent->add2->inAdd;
+            break;
+
+        case R3D_ANIMTREE_SWITCH:
+            if (inputIndex < parent->swch->inCount && parent->swch->inList[inputIndex].base)
+            {
+                return &parent->swch->inList[inputIndex];
+            }
+            break;
+
+        case R3D_ANIMTREE_STM:
+            if (inputIndex < parent->stm->statesCount && parent->stm->nodeList[inputIndex].base)
+            {
+                return &parent->stm->nodeList[inputIndex];
+            }
+            break;
+
+        case R3D_ANIMTREE_STM_X:
+            if (inputIndex == 0 && parent->stmx->nested.base) return &parent->stmx->nested;
+            break;
+
+        default:
+            break;
+    }
+
+    return NULL;
+}
+
+R3D_AnimationTreeNode* R3D_GetActiveAnimationNode(R3D_AnimationTreeNode* node)
+{
+    while (node && node->base)
+    {
+        switch (node->base->type)
+        {
+            case R3D_ANIMTREE_ANIM:
+                return node;
+
+            case R3D_ANIMTREE_SWITCH:
+                node = R3D_GetAnimationNode(node, node->swch->params.activeInput);
+                break;
+
+            case R3D_ANIMTREE_STM:
+                node = R3D_GetAnimationNode(node, node->stm->activeIdx);
+                break;
+
+            case R3D_ANIMTREE_STM_X:
+                node = R3D_GetAnimationNode(node, 0);
+                break;
+
+            default:
+                return NULL;
+        }
+    }
+
+    return NULL;
+}
+
 R3D_AnimationTreeNode* R3D_CreateAnimationNode(R3D_AnimationTree* tree, R3D_AnimationNodeParams params)
 {
     return atree_anim_create(tree, params, false);
@@ -1419,6 +1531,61 @@ void R3D_SetAnimationNodeParams(R3D_AnimationTreeNode* node, R3D_AnimationNodePa
 R3D_AnimationNodeParams R3D_GetAnimationNodeParams(R3D_AnimationTreeNode* node)
 {
     return node->anim->params;
+}
+
+float R3D_GetAnimationNodeTimeSeconds(const R3D_AnimationTreeNode* node)
+{
+    if (!node || !node->base || node->base->type != R3D_ANIMTREE_ANIM) return 0.0f;
+
+    return node->anim->params.state.currentTime;
+}
+
+float R3D_GetAnimationNodeDurationSeconds(const R3D_AnimationTreeNode* node)
+{
+    if (!node || !node->base || node->base->type != R3D_ANIMTREE_ANIM) return 0.0f;
+
+    const R3D_Animation* anim = node->anim->animation;
+    if (!anim) return 0.0f;
+
+    if (!isfinite(anim->duration) || !isfinite(anim->ticksPerSecond)) return 0.0f;
+    if (anim->duration <= 0.0f || anim->ticksPerSecond <= 0.0f) return 0.0f;
+
+    return anim->duration / anim->ticksPerSecond;
+}
+
+float R3D_GetAnimationNodeNormalizedTime(const R3D_AnimationTreeNode* node)
+{
+    float duration = R3D_GetAnimationNodeDurationSeconds(node);
+    if (duration <= 0.0f) return 0.0f;
+
+    float time = R3D_GetAnimationNodeTimeSeconds(node);
+    return Clamp(time / duration, 0.0f, 1.0f);
+}
+
+void R3D_SetAnimationNodeTimeSeconds(R3D_AnimationTree* tree, R3D_AnimationTreeNode* node, float timeSeconds)
+{
+    if (!tree || !node || !node->base || node->base->type != R3D_ANIMTREE_ANIM) return;
+    if (!isfinite(timeSeconds)) return;
+
+    r3d_animtree_anim_t* animNode = node->anim;
+    const R3D_Animation* anim = animNode->animation;
+
+    float duration = R3D_GetAnimationNodeDurationSeconds(node);
+    float time = Clamp(timeSeconds, 0.0f, duration);
+
+    animNode->params.state.currentTime = time;
+    animNode->root.loops = -1;
+
+    int rootBone = tree->rootBone;
+    if (rootBone >= 0 && rootBone < tree->player.skeleton.boneCount)
+    {
+        const R3D_AnimationChannel* channel = r3d_anim_channel_find(anim, rootBone);
+
+        if (channel)
+        {
+            animNode->root.last = r3d_anim_channel_lerp(channel, time * anim->ticksPerSecond, NULL, NULL);
+        }
+    }
 }
 
 void R3D_SetBlend2NodeParams(R3D_AnimationTreeNode* node, R3D_Blend2NodeParams params)
