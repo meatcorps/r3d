@@ -268,6 +268,35 @@ R3DAPI void R3D_SetAnimationLoop(R3D_AnimationPlayer* player, int animIndex, boo
 R3DAPI void R3D_AdvanceAnimationTime(R3D_AnimationPlayer* player, float dt);
 
 /**
+ * @brief Reads a bone's exact local-space pose matrix.
+ *
+ * Preserves scale, reflection and shear without decomposing the matrix.
+ * Does not evaluate animation or recompute the hierarchy.
+ */
+R3DAPI bool R3D_GetAnimationBoneLocalMatrix(const R3D_AnimationPlayer* player, int boneIndex, Matrix* outMatrix);
+
+/**
+ * @brief Replaces a bone's local-space pose with an affine matrix.
+ *
+ * Does not recompute model-space matrices or upload to the GPU.
+ * Later animation sampling may overwrite this pose.
+ */
+R3DAPI bool R3D_SetAnimationBoneLocalMatrix(R3D_AnimationPlayer* player, int boneIndex, Matrix matrix);
+
+/**
+ * @brief Sets a bone's desired model-space pose using an affine matrix.
+ *
+ * Converts the target to local space using the current model-space
+ * parent matrix, or skeleton.rootBind for a root bone.
+ *
+ * The parent's model pose must already be current and invertible.
+ * Supports parent indices in any valid order.
+ *
+ * Does not recompute the hierarchy or upload to the GPU.
+ */
+R3DAPI bool R3D_SetAnimationBoneModelMatrix(R3D_AnimationPlayer* player, int boneIndex, Matrix matrix);
+
+/**
  * @brief Computes the local-space transform of each bone for the current animation.
  *
  * Samples and interpolates the current animation keyframes at the current playback time,

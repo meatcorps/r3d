@@ -281,6 +281,68 @@ void R3D_AdvanceAnimationTime(R3D_AnimationPlayer* player, float dt)
     emit_event(player, R3D_ANIM_EVENT_LOOPED, animIndex);
 }
 
+static bool is_finite_affine_matrix(Matrix matrix)
+{
+    float16 values = MatrixToFloatV(matrix);
+
+    for (int i = 0; i < 16; i++)
+    {
+        if (!isfinite(values.v[i])) return false;
+    }
+
+    const float epsilon = 1e-5f;
+
+    return fabsf(matrix.m3) <= epsilon &&
+           fabsf(matrix.m7) <= epsilon &&
+           fabsf(matrix.m11) <= epsilon &&
+           fabsf(matrix.m15 - 1.0f) <= epsilon;
+}
+
+bool R3D_GetAnimationBoneLocalMatrix(const R3D_AnimationPlayer* player, int boneIndex, Matrix* outMatrix)
+{
+    if (!player || !outMatrix || !player->localPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    *outMatrix = player->localPose[boneIndex];
+    return true;
+}
+
+bool R3D_SetAnimationBoneLocalMatrix(R3D_AnimationPlayer* player, int boneIndex, Matrix matrix)
+{
+    if (!player || !player->localPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+    if (!is_finite_affine_matrix(matrix)) return false;
+
+    player->localPose[boneIndex] = matrix;
+    return true;
+}
+
+bool R3D_SetAnimationBoneModelMatrix(R3D_AnimationPlayer* player, int boneIndex, Matrix matrix)
+{
+    if (!player || !player->localPose || !player->modelPose || !player->skeleton.bones) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+    if (!is_finite_affine_matrix(matrix)) return false;
+
+    const int parentIndex = player->skeleton.bones[boneIndex].parent;
+
+    if (parentIndex < -1 || parentIndex >= player->skeleton.boneCount) return false;
+    if (parentIndex == boneIndex) return false;
+
+    Matrix parentPose = parentIndex >= 0 ? player->modelPose[parentIndex] : player->skeleton.rootBind;
+
+    if (!is_finite_affine_matrix(parentPose)) return false;
+
+    const float determinant = MatrixDeterminant(parentPose);
+    if (!isfinite(determinant) || fabsf(determinant) <= 1e-8f) return false;
+
+    Matrix local = MatrixMultiply(matrix, MatrixInvert(parentPose));
+
+    if (!is_finite_affine_matrix(local)) return false;
+
+    player->localPose[boneIndex] = local;
+    return true;
+}
+
 void R3D_ComputeAnimationLocalPose(R3D_AnimationPlayer* player)
 {
     if (is_anim_index_valid(player, player->activeAnimIndex)) compute_local_matrices(player);
@@ -322,15 +384,27 @@ void R3D_ComputeAnimationPose(R3D_AnimationPlayer* player)
 
 void R3D_UploadAnimationPose(R3D_AnimationPlayer* player)
 {
-    for (int i = 0; i < player->skeleton.boneCount; i++)
+    if (!player || player->skeleton.boneCount <= 0 ||
+        !player->modelPose || !player->skinBuffer ||
+        !player->skeleton.invBind || player->skinTexture == 0)
+    {
+        return;
+    }
+
+    const int boneCount = player->skeleton.boneCount;
+
+    for (int i = 0; i < boneCount; i++)
     {
         player->skinBuffer[i] = MatrixMultiply(player->skeleton.invBind[i], player->modelPose[i]);
     }
 
-    glActiveTexture(GL_TEXTURE0);
+    // Preserve the 1D texture binding on the currently active texture unit.
+    GLint previousTexture = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_1D, &previousTexture);
+
     glBindTexture(GL_TEXTURE_1D, player->skinTexture);
-    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, 4 * player->skeleton.boneCount, GL_RGBA, GL_FLOAT, player->skinBuffer);
-    glBindTexture(GL_TEXTURE_1D, 0);
+    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, 4 * boneCount, GL_RGBA, GL_FLOAT, player->skinBuffer);
+    glBindTexture(GL_TEXTURE_1D, (GLuint)previousTexture);
 }
 
 bool R3D_GetAnimationBoneLocalTransform(const R3D_AnimationPlayer* player, int boneIndex, Transform* outTransform)
@@ -378,9 +452,6 @@ bool R3D_GetAnimationBoneModelMatrix(const R3D_AnimationPlayer* player, int bone
 
 bool R3D_SetAnimationBoneModelTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform)
 {
-    if (!player || !player->localPose || !player->modelPose || !player->skeleton.bones) return false;
-    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
-
     if (!isfinite(transform.translation.x) || !isfinite(transform.translation.y) || !isfinite(transform.translation.z) ||
         !isfinite(transform.rotation.x) || !isfinite(transform.rotation.y) || !isfinite(transform.rotation.z) || !isfinite(transform.rotation.w) ||
         !isfinite(transform.scale.x) || !isfinite(transform.scale.y) || !isfinite(transform.scale.z))
@@ -388,32 +459,9 @@ bool R3D_SetAnimationBoneModelTransform(R3D_AnimationPlayer* player, int boneInd
         return false;
     }
 
-    const int parentIdx = player->skeleton.bones[boneIndex].parent;
-    if (parentIdx < -1 || parentIdx >= boneIndex) return false;
+    Matrix matrix = r3d_matrix_srt_quat(transform.scale, transform.rotation, transform.translation);
 
-    // Root bones use the skeleton's root correction matrix.
-    Matrix parentPose = parentIdx >= 0 ? player->modelPose[parentIdx] : player->skeleton.rootBind;
-
-    // Raylib's MatrixInvert does not reject singular matrices.
-    const float determinant = MatrixDeterminant(parentPose);
-    if (!isfinite(determinant) || fabsf(determinant) <= 1e-8f) return false;
-
-    Matrix desiredModel = r3d_matrix_srt_quat(transform.scale, transform.rotation, transform.translation);
-    Matrix inverseParent = MatrixInvert(parentPose);
-
-    // Match the multiplication convention used by r3d_anim_matrices_compute().
-    Matrix local = MatrixMultiply(desiredModel, inverseParent);
-
-    // Reject numerically invalid results before modifying the pose buffer.
-    float16 values = MatrixToFloatV(local);
-
-    for (int i = 0; i < 16; i++)
-    {
-        if (!isfinite(values.v[i])) return false;
-    }
-
-    player->localPose[boneIndex] = local;
-    return true;
+    return R3D_SetAnimationBoneModelMatrix(player, boneIndex, matrix);
 }
 
 void R3D_UpdateAnimationPlayer(R3D_AnimationPlayer* player, float dt)
