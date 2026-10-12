@@ -345,6 +345,64 @@ bool R3D_SetAnimationBoneLocalTransform(R3D_AnimationPlayer* player, int boneInd
     return true;
 }
 
+bool R3D_GetAnimationBoneModelTransform(const R3D_AnimationPlayer* player, int boneIndex, Transform* outTransform)
+{
+    if (!player || !outTransform || !player->modelPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    r3d_matrix_decompose(player->modelPose[boneIndex], &outTransform->translation, &outTransform->rotation, &outTransform->scale);
+    return true;
+}
+
+bool R3D_GetAnimationBoneModelMatrix(const R3D_AnimationPlayer* player, int boneIndex, Matrix* outMatrix)
+{
+    if (!player || !outMatrix || !player->modelPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    *outMatrix = player->modelPose[boneIndex];
+    return true;
+}
+
+bool R3D_SetAnimationBoneModelTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform)
+{
+    if (!player || !player->localPose || !player->modelPose || !player->skeleton.bones) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    if (!isfinite(transform.translation.x) || !isfinite(transform.translation.y) || !isfinite(transform.translation.z) ||
+        !isfinite(transform.rotation.x) || !isfinite(transform.rotation.y) || !isfinite(transform.rotation.z) || !isfinite(transform.rotation.w) ||
+        !isfinite(transform.scale.x) || !isfinite(transform.scale.y) || !isfinite(transform.scale.z))
+    {
+        return false;
+    }
+
+    const int parentIdx = player->skeleton.bones[boneIndex].parent;
+    if (parentIdx < -1 || parentIdx >= boneIndex) return false;
+
+    // Root bones use the skeleton's root correction matrix.
+    Matrix parentPose = parentIdx >= 0 ? player->modelPose[parentIdx] : player->skeleton.rootBind;
+
+    // Raylib's MatrixInvert does not reject singular matrices.
+    const float determinant = MatrixDeterminant(parentPose);
+    if (!isfinite(determinant) || fabsf(determinant) <= 1e-8f) return false;
+
+    Matrix desiredModel = r3d_matrix_srt_quat(transform.scale, transform.rotation, transform.translation);
+    Matrix inverseParent = MatrixInvert(parentPose);
+
+    // Match the multiplication convention used by r3d_anim_matrices_compute().
+    Matrix local = MatrixMultiply(desiredModel, inverseParent);
+
+    // Reject numerically invalid results before modifying the pose buffer.
+    float16 values = MatrixToFloatV(local);
+
+    for (int i = 0; i < 16; i++)
+    {
+        if (!isfinite(values.v[i])) return false;
+    }
+
+    player->localPose[boneIndex] = local;
+    return true;
+}
+
 void R3D_UpdateAnimationPlayer(R3D_AnimationPlayer* player, float dt)
 {
     R3D_AdvanceAnimationTime(player, dt);

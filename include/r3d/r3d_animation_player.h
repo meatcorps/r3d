@@ -338,6 +338,46 @@ R3DAPI bool R3D_GetAnimationBoneLocalTransform(const R3D_AnimationPlayer* player
 R3DAPI bool R3D_SetAnimationBoneLocalTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform);
 
 /**
+ * @brief Gets the current model-space transform of a bone.
+ *
+ * Reads the last computed model pose and decomposes it into TRS.
+ * Sheared matrices cannot be represented exactly by Transform.
+ *
+ * Does not evaluate animation or recompute the hierarchy.
+ *
+ * @return True on success, false for invalid arguments.
+ */
+R3DAPI bool R3D_GetAnimationBoneModelTransform(const R3D_AnimationPlayer* player, int boneIndex, Transform* outTransform);
+
+/**
+ * @brief Gets the exact model-space matrix of a bone.
+ *
+ * Includes all ancestor transforms and the skeleton root correction,
+ * but excludes the model's placement in the scene.
+ *
+ * Preserves shear and other matrix information.
+ *
+ * @return True on success, false for invalid arguments.
+ */
+R3DAPI bool R3D_GetAnimationBoneModelMatrix(const R3D_AnimationPlayer* player, int boneIndex, Matrix* outMatrix);
+
+/**
+ * @brief Sets a bone's desired model-space transform.
+ *
+ * Converts the requested TRS into a local matrix using the current
+ * model-space transform of its parent (or skeleton.rootBind for roots).
+ *
+ * Updates player->localPose only. Does not recompute modelPose,
+ * update children, advance animation, or upload to the GPU.
+ *
+ * The parent's model pose must be current and invertible.
+ * The resulting local matrix may contain shear.
+ *
+ * @return True on success. False if the input or parent is invalid.
+ */
+R3DAPI bool R3D_SetAnimationBoneModelTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform);
+
+/**
  * @brief Advances animation time, evaluates the resulting pose and uploads it.
  *
  * The resulting local/model pose and GPU skinning matrices correspond to
