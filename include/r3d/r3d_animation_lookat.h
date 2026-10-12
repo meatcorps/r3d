@@ -27,6 +27,20 @@ typedef struct R3D_BoneLookAtParams {
 } R3D_BoneLookAtParams;
 
 /**
+ * @brief Configuration for directional bone aiming.
+ *
+ * Unlike LookAt, Aim applies the shortest swing needed to align the
+ * forward axis. It does not try to align the up axis to a model-up vector,
+ * preserving the authored twist/roll as much as possible.
+ */
+typedef struct R3D_BoneAimParams {
+    Vector3 localForward;
+    Vector3 localUp;
+    float weight;
+    float maxAngleRadians;
+} R3D_BoneAimParams;
+
+/**
  * @brief Rotates a bone toward a target in character/model space.
  *
  * Applies a weighted rotational correction to the current local pose.
@@ -42,6 +56,19 @@ typedef struct R3D_BoneLookAtParams {
  * coincident with the bone origin.
  */
 R3DAPI bool R3D_ApplyAnimationBoneLookAt(R3D_AnimationPlayer* player, int boneIndex, Vector3 targetModel, R3D_BoneLookAtParams params);
+
+/**
+ * @brief Aim the current bone pose at a target in character/model space.
+ *
+ * Applies a weighted shortest-arc rotation to the current local matrix.
+ * Retains translation, scale, shear and the authored roll/twist (where
+ * geometrically possible). No animation sampling, hierarchy update or GPU
+ * upload is performed. The parent's model pose must already be current.
+ *
+ * Returns false on invalid arguments, degenerate axes, invalid parent
+ * matrix, or a target coincident with the bone origin.
+ */
+R3DAPI bool R3D_ApplyAnimationBoneAim(R3D_AnimationPlayer* player, int boneIndex, Vector3 targetModel, R3D_BoneAimParams params);
 
 #ifdef __cplusplus
 }

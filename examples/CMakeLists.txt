@@ -35,6 +35,7 @@ add_example(r3d_animation_external_pose "examples/animation_external_pose.c")
 add_example(r3d_animation_attachment "examples/animation_attachment.c")
 add_example(r3d_animation_bone_lookat "examples/animation_bone_lookat.c")
 add_example(r3d_animation_lookat_visual "examples/animation_lookat_visual.c")
+add_example(r3d_animation_bone_aim "examples/animation_bone_aim.c")
 
 add_example(r3d_bloom "examples/bloom.c")
 add_example(r3d_resize "examples/resize.c")

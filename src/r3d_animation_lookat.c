@@ -183,3 +183,83 @@ bool R3D_ApplyAnimationBoneLookAt(R3D_AnimationPlayer* player, int boneIndex, Ve
 
     return R3D_SetAnimationBoneLocalMatrix(player, boneIndex, rotatedLocal);
 }
+
+bool R3D_ApplyAnimationBoneAim(R3D_AnimationPlayer* player, int boneIndex, Vector3 targetModel, R3D_BoneAimParams params)
+{
+    if (!player || !player->skeleton.bones) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    if (!finite_vec3(targetModel) || !finite_vec3(params.localForward) ||
+        !finite_vec3(params.localUp) || !isfinite(params.weight) ||
+        !isfinite(params.maxAngleRadians) ||
+        params.weight < 0.0f || params.weight > 1.0f ||
+        params.maxAngleRadians < 0.0f)
+    {
+        return false;
+    }
+
+    Vector3 localForward = params.localForward;
+    Vector3 localUp = params.localUp;
+
+    if (!normalize_safe(&localForward) || !normalize_safe(&localUp)) return false;
+
+    Vector3 localSide = Vector3CrossProduct(localForward, localUp);
+    if (!normalize_safe(&localSide)) return false;
+
+    Matrix localPose;
+    if (!R3D_GetAnimationBoneLocalMatrix(player, boneIndex, &localPose)) return false;
+
+    const int parentIndex = player->skeleton.bones[boneIndex].parent;
+    if (parentIndex < -1 || parentIndex >= player->skeleton.boneCount || parentIndex == boneIndex) return false;
+
+    Matrix parentPose = player->skeleton.rootBind;
+    if (parentIndex >= 0 && !R3D_GetAnimationBoneModelMatrix(player, parentIndex, &parentPose)) return false;
+
+    const float determinant = MatrixDeterminant(parentPose);
+    if (!isfinite(determinant) || fabsf(determinant) <= 1e-8f) return false;
+
+    // Work in parent space; this also handles rotated/nonuniform parents.
+    const Matrix inverseParent = MatrixInvert(parentPose);
+    const Vector3 targetParent = Vector3Transform(targetModel, inverseParent);
+    const Vector3 boneOrigin = {localPose.m12, localPose.m13, localPose.m14};
+
+    Vector3 desiredForward = Vector3Subtract(targetParent, boneOrigin);
+    Vector3 currentForward = transform_direction(localForward, localPose);
+
+    if (!normalize_safe(&desiredForward) || !normalize_safe(&currentForward)) return false;
+
+    const float dot = Clamp(Vector3DotProduct(currentForward, desiredForward), -1.0f, 1.0f);
+    const float angle = acosf(dot);
+
+    if (angle <= 1e-6f || params.weight == 0.0f) return true;
+
+    Vector3 axis = Vector3CrossProduct(currentForward, desiredForward);
+
+    if (!normalize_safe(&axis))
+    {
+        // Exactly opposite directions: choose a stable 180-degree axis
+        // from the already animated local up vector.
+        if (dot > 0.0f) return true;
+
+        Vector3 currentUp = transform_direction(localUp, localPose);
+        axis = project_perpendicular(currentUp, currentForward);
+        if (!normalize_safe(&axis)) return false;
+    }
+
+    float limitedAngle = angle;
+    if (params.maxAngleRadians > 0.0f) limitedAngle = fminf(limitedAngle, params.maxAngleRadians);
+
+    const Quaternion swing = QuaternionFromAxisAngle(axis, limitedAngle * params.weight);
+    Matrix correctedLocal = MatrixMultiply(localPose, QuaternionToMatrix(swing));
+
+    // Rotate only the linear basis, not the bone origin.
+    correctedLocal.m12 = localPose.m12;
+    correctedLocal.m13 = localPose.m13;
+    correctedLocal.m14 = localPose.m14;
+    correctedLocal.m3 = localPose.m3;
+    correctedLocal.m7 = localPose.m7;
+    correctedLocal.m11 = localPose.m11;
+    correctedLocal.m15 = localPose.m15;
+
+    return R3D_SetAnimationBoneLocalMatrix(player, boneIndex, correctedLocal);
+}
