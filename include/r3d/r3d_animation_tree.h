@@ -83,7 +83,7 @@ typedef enum {
  * Bone mask structure, can by created by R3D_ComputeBoneMask.
  */
 typedef struct {
-    int32_t mask[8];    ///< Bit mask buffer for maximum of 256 bones (32bits * 8).
+    uint32_t mask[8];    ///< Bit mask buffer for maximum of 256 bones (32bits * 8).
     int boneCount;      ///< Actual bones count.
 } R3D_BoneMask;
 
@@ -546,6 +546,22 @@ R3DAPI void R3D_TravelToStmState(R3D_AnimationTreeNode* node,
  */
 R3DAPI R3D_BoneMask R3D_ComputeBoneMask(const R3D_Skeleton* skeleton, const char* boneNames[],
                                         int boneNameCount);
+
+/**
+ * @brief Automatically computes a bone mask from an animation's channels.
+ *
+ * Includes every bone with at least one translation, rotation or scale key.
+ * Channels without keyframes are ignored.
+ *
+ * The generated mask can be used with Blend2 and Add2 nodes.
+ * No hierarchy expansion or value-based movement detection is performed.
+ *
+ * @param animation Animation used to generate the mask.
+ * @return Generated mask, or a zeroed structure on invalid input.
+ *         A valid animation with no animated bones produces an empty mask
+ *         with boneCount set to the animation's bone count.
+ */
+R3DAPI R3D_BoneMask R3D_ComputeAnimationBoneMask(const R3D_Animation* animation);
 
 #ifdef __cplusplus
 } // extern "C"

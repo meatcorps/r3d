@@ -183,11 +183,12 @@ static bool valid_root_bone(int boneIdx)
 
 static bool masked_bone(const R3D_BoneMask* bMask, int boneIdx)
 {
-    int maskBits = (sizeof(bMask->mask[0]) * 8);
-    int part     = boneIdx / maskBits;
-    int bit      = boneIdx % maskBits;
+    if (!bMask || boneIdx < 0 || boneIdx >= bMask->boneCount || boneIdx >= 256) return false;
 
-    return (bMask->mask[part] & (1 << bit)) != 0;
+    const int part = boneIdx / 32;
+    const int bit = boneIdx % 32;
+
+    return (bMask->mask[part] & (UINT32_C(1) << bit)) != 0;
 }
 
 // ========================================
@@ -1659,7 +1660,7 @@ R3D_BoneMask R3D_ComputeBoneMask(const R3D_Skeleton* skeleton, const char* boneN
             {
                 int part = bIdx / maskBits;
                 int bit = bIdx % maskBits;
-                bMask.mask[part] |= 1 << bit;
+                bMask.mask[part] |= UINT32_C(1) << bit;
                 found = true;
                 break;
             }
@@ -1673,4 +1674,51 @@ R3D_BoneMask R3D_ComputeBoneMask(const R3D_Skeleton* skeleton, const char* boneN
     }
 
     return bMask;
+}
+
+R3D_BoneMask R3D_ComputeAnimationBoneMask(const R3D_Animation* animation)
+{
+    R3D_BoneMask boneMask = {0};
+
+    if (!animation)
+    {
+        R3D_TRACELOG(LOG_WARNING, "Failed to compute animation bone mask: animation is NULL");
+        return boneMask;
+    }
+
+    const int boneCount = animation->boneCount;
+
+    if (boneCount < 0 || boneCount > 256 || animation->channelCount < 0 ||
+        (animation->channelCount > 0 && !animation->channels))
+    {
+        R3D_TRACELOG(LOG_WARNING, "Failed to compute animation bone mask: invalid animation data");
+        return boneMask;
+    }
+
+    boneMask.boneCount = boneCount;
+
+    for (int i = 0; i < animation->channelCount; i++)
+    {
+        const R3D_AnimationChannel* channel = &animation->channels[i];
+
+        // Ignore channels without animation keys.
+        if (channel->translation.count <= 0 &&
+            channel->rotation.count <= 0 &&
+            channel->scale.count <= 0)
+        {
+            continue;
+        }
+
+        const int boneIdx = channel->boneIndex;
+
+        if (boneIdx < 0 || boneIdx >= boneCount)
+        {
+            R3D_TRACELOG(LOG_WARNING, "Failed to compute animation bone mask: invalid bone index %d", boneIdx);
+            return (R3D_BoneMask){0};
+        }
+
+        boneMask.mask[boneIdx / 32] |= UINT32_C(1) << (boneIdx % 32);
+    }
+
+    return boneMask;
 }
