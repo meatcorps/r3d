@@ -135,6 +135,17 @@ R3DAPI Matrix R3D_GetMatrixInvProjection(void);
  */
 R3DAPI Matrix R3D_GetMatrixViewProjection(void);
 
+/**
+ * @brief Compares two matrices for equality within a small tolerance.
+ *
+ * This function checks if the two matrices are equal within a tolerance of 0.00001f.
+ *
+ * @param a The first matrix to compare.
+ * @param b The second matrix to compare.
+ * @return True if the matrices are equal within the tolerance, false otherwise.
+ */
+R3DAPI bool R3D_MatrixEquals(Matrix a, Matrix b);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

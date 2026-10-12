@@ -1,5 +1,6 @@
 #include <r3d/r3d.h>
 #include <raymath.h>
+#include <string.h>
 
 #ifndef RESOURCES_PATH
 #	define RESOURCES_PATH "./"
@@ -87,7 +88,34 @@ int main(void)
         }
 
         UpdateCamera(&camera, CAMERA_ORBITAL);
-        R3D_UpdateAnimationPlayer(&modelPlayer, delta);
+        bool verifyOrder = IsKeyPressed(KEY_T);
+        float updateDelta = verifyOrder ? R3D_GetAnimationDurationSeconds(modelPlayer, 0) * 0.25f : delta;
+
+        R3D_UpdateAnimationPlayer(&modelPlayer, updateDelta);
+
+        if (verifyOrder)
+        {
+            int boneCount = modelPlayer.skeleton.boneCount;
+            Matrix* sampledPose = MemAlloc(boneCount * sizeof(Matrix));
+
+            if (sampledPose)
+            {
+                memcpy(sampledPose, modelPlayer.localPose, boneCount * sizeof(Matrix));
+
+                // Evaluate again at the reported time without advancing.
+                R3D_ComputeAnimationPose(&modelPlayer);
+
+                int mismatches = 0;
+                for (int i = 0; i < boneCount; i++)
+                {
+                    if (!R3D_MatrixEquals(sampledPose[i], modelPlayer.localPose[i])) mismatches++;
+                }
+
+                TraceLog(mismatches == 0 ? LOG_INFO : LOG_ERROR, "Animation pose/time synchronization: %s (%d mismatched bones)", mismatches == 0 ? "PASS" : "FAIL", mismatches);
+
+                MemFree(sampledPose);
+            }
+        }
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
@@ -98,7 +126,7 @@ int main(void)
                 R3D_DrawAnimatedModelInstanced(model, modelPlayer, instances, 4);
             R3D_End();
 
-            DrawText(TextFormat("Time: %.3f / %.3f seconds",
+            DrawText(TextFormat("Time: %.1f / %.1f seconds",
             R3D_GetAnimationTimeSeconds(modelPlayer, 0),
             R3D_GetAnimationDurationSeconds(modelPlayer, 0)), 10, 10, 20, BLACK);
 

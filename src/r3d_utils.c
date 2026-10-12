@@ -95,3 +95,18 @@ Matrix R3D_GetMatrixViewProjection(void)
 {
     return R3D.viewState.viewProj;
 }
+
+bool R3D_MatrixEquals(Matrix a, Matrix b)
+{
+    float16 valuesA = MatrixToFloatV(a);
+    float16 valuesB = MatrixToFloatV(b);
+
+    for (int i = 0; i < 16; i++)
+    {
+        if (!(fabsf(valuesA.v[i] - valuesB.v[i]) <= 0.00001f)) {
+            return false;
+        }
+    }
+
+    return true;
+}

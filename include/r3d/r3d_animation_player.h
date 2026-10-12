@@ -311,13 +311,19 @@ R3DAPI void R3D_ComputeAnimationPose(R3D_AnimationPlayer* player);
 R3DAPI void R3D_UploadAnimationPose(R3D_AnimationPlayer* player);
 
 /**
- * @brief Updates the animation player: calculates and upload the current pose pose, then advances time.
+ * @brief Advances animation time, evaluates the resulting pose and uploads it.
  *
- * Equivalent to calling R3D_ComputeAnimationLocalPose() followed by
- * R3D_ComputeAnimationModelPose() and R3D_AdvanceAnimationTime().
+ * The resulting local/model pose and GPU skinning matrices correspond to
+ * the current playback time reported after this function returns.
+ *
+ * Equivalent to calling R3D_AdvanceAnimationTime(),
+ * R3D_ComputeAnimationPose() and R3D_UploadAnimationPose(), in that order.
+ *
+ * Paused animations and zero delta time still evaluate the current pose,
+ * allowing explicit time changes to be reflected immediately.
  *
  * @param player Animation player.
- * @param dt Delta time in seconds.
+ * @param dt Nonnegative elapsed time in seconds.
  */
 R3DAPI void R3D_UpdateAnimationPlayer(R3D_AnimationPlayer* player, float dt);
 

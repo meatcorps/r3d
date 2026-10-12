@@ -322,10 +322,9 @@ void R3D_UploadAnimationPose(R3D_AnimationPlayer* player)
 
 void R3D_UpdateAnimationPlayer(R3D_AnimationPlayer* player, float dt)
 {
+    R3D_AdvanceAnimationTime(player, dt);
     R3D_ComputeAnimationPose(player);
     R3D_UploadAnimationPose(player);
-
-    R3D_AdvanceAnimationTime(player, dt);
 }
 
 // ========================================
