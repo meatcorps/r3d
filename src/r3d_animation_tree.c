@@ -886,10 +886,10 @@ static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t*
     const bool doAdd = !bmask || masked_bone(bmask, boneIdx);
     const bool isRm = info && is_root_bone(atree, boneIdx);
 
-    rminfo_t rm[2] = {0};
+    rminfo_t mainRm = {0};
     Transform in[2] = {0};
 
-    bool success = anode_eval(atree, node->inMain, boneIdx, &in[0], isRm ? &rm[0] : NULL);
+    bool success = anode_eval(atree, node->inMain, boneIdx, &in[0], isRm ? &mainRm : NULL);
     if (!success)
     {
         R3D_TRACELOG(LOG_WARNING, "Failed to eval add2 node");
@@ -898,7 +898,7 @@ static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t*
 
     if (doAdd)
     {
-        success = anode_eval(atree, node->inAdd, boneIdx, &in[1], isRm ? &rm[1] : NULL);
+        success = anode_eval(atree, node->inAdd, boneIdx, &in[1], NULL);
         if (!success)
         {
             R3D_TRACELOG(LOG_WARNING, "Failed to eval add2 node");
@@ -907,15 +907,20 @@ static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t*
     }
 
     const float w = R3D_CLAMP(node->params.weight, 0.0f, 1.0f);
-    *out = doAdd ? r3d_anim_transform_add_v(in[0], in[1], w) : in[0];
 
-    if (isRm)
+    if (doAdd && w > 0.0f)
     {
-        *info = doAdd ? (rminfo_t) {
-            .motion = r3d_anim_transform_lerp(rm[0].motion, rm[1].motion, w),
-            .distance = r3d_anim_transform_lerp(rm[0].distance, rm[1].distance, w)
-        } : rm[0];
+        Transform reference;
+        r3d_matrix_decompose(atree->player.skeleton.localBind[boneIdx], &reference.translation, &reference.rotation, &reference.scale);
+
+        *out = r3d_anim_transform_additive(in[0], in[1], reference, w);
     }
+    else
+    {
+        *out = in[0];
+    }
+
+    if (isRm) *info = mainRm;
 
     return true;
 }

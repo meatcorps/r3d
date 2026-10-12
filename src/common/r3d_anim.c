@@ -212,3 +212,45 @@ Transform r3d_anim_channel_lerp(const R3D_AnimationChannel* channel, float time,
 
     return result;
 }
+
+static float additive_scale_component(float base, float layer, float reference, float weight)
+{
+    // A zero reference scale has no multiplicative inverse.
+    // Use an additive difference as a fallback.
+    if (fabsf(reference) <= 1e-6f)
+    {
+        return base + (layer - reference) * weight;
+    }
+
+    const float ratio = layer / reference;
+    return base * (1.0f + (ratio - 1.0f) * weight);
+}
+
+Transform r3d_anim_transform_additive(Transform base, Transform layer, Transform reference, float weight)
+{
+    if (weight <= 0.0f) return base;
+
+    Transform result;
+
+    // Translation: apply the offset relative to the reference pose.
+    Vector3 translationDelta = Vector3Subtract(layer.translation, reference.translation);
+    result.translation = Vector3Add(base.translation, Vector3Scale(translationDelta, weight));
+
+    // Rotation: apply the layer's local rotation relative to the reference pose.
+    Quaternion baseRotation = r3d_quaternion_normalize_or_id(base.rotation);
+    Quaternion layerRotation = r3d_quaternion_normalize_or_id(layer.rotation);
+    Quaternion referenceRotation = r3d_quaternion_normalize_or_id(reference.rotation);
+
+    Quaternion rotationDelta = QuaternionMultiply(QuaternionInvert(referenceRotation), layerRotation);
+    rotationDelta = r3d_quaternion_normalize_or_id(rotationDelta);
+
+    Quaternion weightedRotation = QuaternionSlerp(QuaternionIdentity(), rotationDelta, weight);
+    result.rotation = r3d_quaternion_normalize_or_id(QuaternionMultiply(baseRotation, weightedRotation));
+
+    // Scale: multiply by the weighted ratio relative to the reference pose.
+    result.scale.x = additive_scale_component(base.scale.x, layer.scale.x, reference.scale.x, weight);
+    result.scale.y = additive_scale_component(base.scale.y, layer.scale.y, reference.scale.y, weight);
+    result.scale.z = additive_scale_component(base.scale.z, layer.scale.z, reference.scale.z, weight);
+
+    return result;
+}

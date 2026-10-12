@@ -23,6 +23,7 @@ add_example(r3d_animation_timing "examples/animation_timing.c")
 add_example(r3d_animation_sparse "examples/animation_sparse.c")
 add_example(r3d_animation_masks "examples/animation_masks.c")
 add_example(r3d_meshanimation "examples/meshanimation.c")
+add_example(r3d_animation_additive "examples/animation_additive.c")
 add_example(r3d_animtree "examples/animtree.c")
 add_example(r3d_bloom "examples/bloom.c")
 add_example(r3d_resize "examples/resize.c")
@@ -38,6 +39,8 @@ add_example(r3d_multiview "examples/multiview.c")
 add_example(r3d_to_texture "examples/to_texture.c")
 add_example(r3d_matrix_decompose "examples/matrix_decompose.c")
 
+
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
 target_include_directories(r3d_animation_sparse PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
+target_include_directories(r3d_animation_additive PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
