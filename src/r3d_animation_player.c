@@ -320,6 +320,31 @@ void R3D_UploadAnimationPose(R3D_AnimationPlayer* player)
     glBindTexture(GL_TEXTURE_1D, 0);
 }
 
+bool R3D_GetAnimationBoneLocalTransform(const R3D_AnimationPlayer* player, int boneIndex, Transform* outTransform)
+{
+    if (!player || !outTransform || !player->localPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    r3d_matrix_decompose(player->localPose[boneIndex], &outTransform->translation, &outTransform->rotation, &outTransform->scale);
+    return true;
+}
+
+bool R3D_SetAnimationBoneLocalTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform)
+{
+    if (!player || !player->localPose) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    if (!isfinite(transform.translation.x) || !isfinite(transform.translation.y) || !isfinite(transform.translation.z) ||
+        !isfinite(transform.rotation.x) || !isfinite(transform.rotation.y) || !isfinite(transform.rotation.z) || !isfinite(transform.rotation.w) ||
+        !isfinite(transform.scale.x) || !isfinite(transform.scale.y) || !isfinite(transform.scale.z))
+    {
+        return false;
+    }
+
+    player->localPose[boneIndex] = r3d_matrix_srt_quat(transform.scale, transform.rotation, transform.translation);
+    return true;
+}
+
 void R3D_UpdateAnimationPlayer(R3D_AnimationPlayer* player, float dt)
 {
     R3D_AdvanceAnimationTime(player, dt);

@@ -311,6 +311,33 @@ R3DAPI void R3D_ComputeAnimationPose(R3D_AnimationPlayer* player);
 R3DAPI void R3D_UploadAnimationPose(R3D_AnimationPlayer* player);
 
 /**
+ * @brief Gets the current local-space transform of a bone.
+ *
+ * The returned transform is relative to the bone's parent.
+ * Reads the last computed local pose without evaluating animation
+ * or recomputing the hierarchy.
+ *
+ * The matrix is decomposed into translation, rotation and scale.
+ * Arbitrary shear cannot be represented by Transform.
+ *
+ * @return True on success, false for an invalid bone or argument.
+ */
+R3DAPI bool R3D_GetAnimationBoneLocalTransform(const R3D_AnimationPlayer* player, int boneIndex, Transform* outTransform);
+
+/**
+ * @brief Sets the current local-space transform of a bone.
+ *
+ * Replaces the bone's local pose with the supplied TRS transform.
+ * Does not advance animation, recompute the hierarchy, or upload
+ * the final pose to the GPU.
+ *
+ * Subsequent animation sampling may overwrite this modification.
+ *
+ * @return True on success, false for an invalid bone or argument.
+ */
+R3DAPI bool R3D_SetAnimationBoneLocalTransform(R3D_AnimationPlayer* player, int boneIndex, Transform transform);
+
+/**
  * @brief Advances animation time, evaluates the resulting pose and uploads it.
  *
  * The resulting local/model pose and GPU skinning matrices correspond to
