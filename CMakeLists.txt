@@ -269,6 +269,7 @@ add_library(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/src/r3d_animation_player.c"
     "${R3D_ROOT_PATH}/src/r3d_animation_tree.c"
     "${R3D_ROOT_PATH}/src/r3d_animation_lookat.c"
+    "${R3D_ROOT_PATH}/src/r3d_animation_ik.c"
     "${R3D_ROOT_PATH}/src/r3d_animation.c"
     "${R3D_ROOT_PATH}/src/r3d_core.c"
     "${R3D_ROOT_PATH}/src/r3d_camera.c"

@@ -37,6 +37,8 @@ add_example(r3d_animation_bone_lookat "examples/animation_bone_lookat.c")
 add_example(r3d_animation_lookat_visual "examples/animation_lookat_visual.c")
 add_example(r3d_animation_bone_aim "examples/animation_bone_aim.c")
 add_example(r3d_animation_lookat_pipeline "examples/animation_lookat_pipeline.c")
+add_example(r3d_animation_two_bone_ik "examples/animation_two_bone_ik.c")
+add_example(r3d_animation_two_bone_ik_visual "examples/animation_two_bone_ik_visual.c")
 
 add_example(r3d_bloom "examples/bloom.c")
 add_example(r3d_resize "examples/resize.c")
@@ -51,7 +53,6 @@ add_example(r3d_decal "examples/decal.c")
 add_example(r3d_multiview "examples/multiview.c")
 add_example(r3d_to_texture "examples/to_texture.c")
 add_example(r3d_matrix_decompose "examples/matrix_decompose.c")
-
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
