@@ -289,8 +289,21 @@ void R3D_ComputeAnimationLocalPose(R3D_AnimationPlayer* player)
 
 void R3D_ComputeAnimationModelPose(R3D_AnimationPlayer* player)
 {
-    if (is_anim_index_valid(player, player->activeAnimIndex)) r3d_anim_matrices_compute(player);
+    if (is_anim_index_valid(player, player->activeAnimIndex)) R3D_RecomputeAnimationModelPose(player);
     else memcpy(player->modelPose, player->skeleton.modelBind, player->skeleton.boneCount * sizeof(Matrix));
+}
+
+bool R3D_RecomputeAnimationModelPose(R3D_AnimationPlayer* player)
+{
+    return r3d_anim_matrices_compute(player, -1);
+}
+
+bool R3D_RecomputeAnimationModelPoseFromBone(R3D_AnimationPlayer* player, int boneIndex)
+{
+    if (!player) return false;
+    if (boneIndex < 0 || boneIndex >= player->skeleton.boneCount) return false;
+
+    return r3d_anim_matrices_compute(player, boneIndex);
 }
 
 void R3D_ComputeAnimationPose(R3D_AnimationPlayer* player)
@@ -298,7 +311,7 @@ void R3D_ComputeAnimationPose(R3D_AnimationPlayer* player)
     if (is_anim_index_valid(player, player->activeAnimIndex))
     {
         compute_local_matrices(player);
-        r3d_anim_matrices_compute(player);
+        R3D_RecomputeAnimationModelPose(player);
     }
     else
     {

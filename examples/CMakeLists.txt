@@ -29,6 +29,7 @@ add_example(r3d_animtree "examples/animtree.c")
 add_example(r3d_animation_tree_pipeline "examples/animation_tree_pipeline.c")
 add_example(r3d_animation_local_pose "examples/animation_local_pose.c")
 add_example(r3d_animation_model_pose "examples/animation_model_pose.c")
+add_example(r3d_animation_pose_recompute "examples/animation_pose_recompute.c")
 
 add_example(r3d_bloom "examples/bloom.c")
 add_example(r3d_resize "examples/resize.c")

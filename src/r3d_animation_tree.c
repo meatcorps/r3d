@@ -1390,18 +1390,7 @@ bool R3D_ComputeAnimationTreeModelPose(R3D_AnimationTree* tree)
 {
     if (!tree) return false;
 
-    R3D_AnimationPlayer* player = &tree->player;
-
-    if (player->skeleton.boneCount <= 0 ||
-        !player->skeleton.bones ||
-        !player->localPose ||
-        !player->modelPose)
-    {
-        return false;
-    }
-
-    r3d_anim_matrices_compute(player);
-    return true;
+    return R3D_RecomputeAnimationModelPose(&tree->player);
 }
 
 void R3D_UpdateAnimationTreeEx(R3D_AnimationTree* tree, float dt, Transform* rootMotion, Transform* rootDistance)

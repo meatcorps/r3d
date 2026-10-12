@@ -290,6 +290,35 @@ R3DAPI void R3D_ComputeAnimationLocalPose(R3D_AnimationPlayer* player);
 R3DAPI void R3D_ComputeAnimationModelPose(R3D_AnimationPlayer* player);
 
 /**
+ * @brief Recomputes the complete model-space bone hierarchy.
+ *
+ * Uses the current player->localPose without sampling animations.
+ * Supports parent indices in any valid hierarchy order.
+ *
+ * Does not advance animation time or upload to the GPU.
+ * Unlike R3D_ComputeAnimationModelPose(), this does not restore
+ * the bind pose when no standalone animation is active.
+ *
+ * @return True on success, false for invalid pose data or hierarchy.
+ */
+R3DAPI bool R3D_RecomputeAnimationModelPose(R3D_AnimationPlayer* player);
+
+/**
+ * @brief Recomputes a bone and all of its descendants.
+ *
+ * Updates model-space matrices in the selected subtree only.
+ * Other bone matrices remain unchanged.
+ *
+ * The selected bone's parent model-space matrix must already be
+ * current. Supports non-contiguous and unordered bone indices.
+ *
+ * Does not sample animation or upload to the GPU.
+ *
+ * @return True on success, false for invalid arguments or hierarchy.
+ */
+R3DAPI bool R3D_RecomputeAnimationModelPoseFromBone(R3D_AnimationPlayer* player, int boneIndex);
+
+/**
  * @brief Computes both the local and model-space transforms for the current animation.
  *
  * Equivalent to calling R3D_ComputeAnimationLocalPose() followed by R3D_ComputeAnimationModelPose().

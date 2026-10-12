@@ -118,20 +118,106 @@ Transform r3d_anim_transform_scale(Transform tf, float val)
     return result;
 }
 
-void r3d_anim_matrices_compute(R3D_AnimationPlayer* player)
+static int bone_in_subtree(const R3D_BoneInfo* bones, int boneCount, int boneIndex, int rootBone)
 {
-    const R3D_BoneInfo* bones = player->skeleton.bones;
-    const Matrix rootBind     = player->skeleton.rootBind;
-    const Matrix* localPose   = player->localPose;
-    const int boneCount       = player->skeleton.boneCount;
+    int current = boneIndex;
 
-    Matrix* pose = player->modelPose;
-    for (int boneIdx = 0; boneIdx < boneCount; boneIdx++)
+    for (int depth = 0; depth <= boneCount; depth++)
     {
-        int parentIdx  = bones[boneIdx].parent;
-        Matrix parentPose = parentIdx >= 0 ? pose[parentIdx] : rootBind;
-        pose[boneIdx] = MatrixMultiply(localPose[boneIdx], parentPose);
+        if (current == -1) return 0;
+        if (current < 0 || current >= boneCount) return -1;
+        if (current == rootBone) return 1;
+
+        current = bones[current].parent;
     }
+
+    // Invalid hierarchy: a cycle was encountered.
+    return -1;
+}
+
+static bool recompute_model_bone(R3D_AnimationPlayer* player, int boneIndex, uint8_t* states)
+{
+    if (states[boneIndex] == 2) return true;
+    if (states[boneIndex] == 1) return false;
+
+    const R3D_Skeleton* skeleton = &player->skeleton;
+    const int parentIndex = skeleton->bones[boneIndex].parent;
+
+    if (parentIndex < -1 || parentIndex >= skeleton->boneCount) return false;
+
+    states[boneIndex] = 1;
+
+    if (parentIndex >= 0)
+    {
+        if (!recompute_model_bone(player, parentIndex, states)) return false;
+    }
+
+    Matrix parentPose = parentIndex >= 0 ? player->modelPose[parentIndex] : skeleton->rootBind;
+
+    player->modelPose[boneIndex] = MatrixMultiply(player->localPose[boneIndex], parentPose);
+    states[boneIndex] = 2;
+
+    return true;
+}
+
+bool r3d_anim_matrices_compute(R3D_AnimationPlayer* player, int rootBone)
+{
+    if (!player || !player->localPose || !player->modelPose || !player->skeleton.bones) return false;
+
+    const int boneCount = player->skeleton.boneCount;
+
+    if (boneCount <= 0) return false;
+    if (rootBone < -1 || rootBone >= boneCount) return false;
+
+    // Most skeletons fit within the 256-bone range used by R3D bone masks.
+    // Larger skeletons remain supported, using temporary heap storage.
+    uint8_t stackStates[256];
+    uint8_t* states = stackStates;
+
+    if (boneCount > (int)sizeof(stackStates))
+    {
+        states = MemAlloc((unsigned int)boneCount);
+        if (!states) return false;
+    }
+
+    bool success = true;
+
+    for (int i = 0; i < boneCount; i++)
+    {
+        if (rootBone == -1)
+        {
+            states[i] = 0;
+        }
+        else
+        {
+            int membership = bone_in_subtree(player->skeleton.bones, boneCount, i, rootBone);
+
+            if (membership < 0)
+            {
+                success = false;
+                break;
+            }
+
+            // Bones outside the subtree are already computed and preserved.
+            states[i] = membership ? 0 : 2;
+        }
+    }
+
+    if (success)
+    {
+        for (int i = 0; i < boneCount; i++)
+        {
+            if (states[i] == 0 && !recompute_model_bone(player, i, states))
+            {
+                success = false;
+                break;
+            }
+        }
+    }
+
+    if (states != stackStates) MemFree(states);
+
+    return success;
 }
 
 // ========================================
