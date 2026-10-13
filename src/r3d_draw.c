@@ -384,6 +384,87 @@ void R3D_DrawMeshPro(R3D_Mesh mesh, R3D_Material material, Matrix transform)
     r3d_render_call_push(&drawCall);
 }
 
+/*
+ * Queues one morphable mesh, optionally with a skin texture.
+ *
+ * The renderer captures weights and updates bounds before
+ * committing either the render group or the draw call.
+ */
+static bool draw_shape_key_mesh_internal(
+    R3D_Mesh mesh,
+    R3D_Material material,
+    GLuint skinTexture,
+    const R3D_ShapeKeyGpu* gpu,
+    const R3D_ShapeKeyInstance* instance,
+    Matrix transform)
+{
+    if (!IS_MESH_VALID(mesh) ||
+        !R3D_IsShapeKeyGpuValid(gpu) ||
+        mesh.vertexCount != gpu->vertexCount)
+    {
+        return false;
+    }
+
+    BoundingBox bounds = mesh.aabb;
+    r3d_render_morph_t morph = {0};
+
+    if (!r3d_render_queue_morph(
+        gpu, instance, &bounds, &morph))
+    {
+        return false;
+    }
+
+    r3d_render_group_t group = {0};
+
+    group.transform = transform;
+    group.obb = R3D_GetOrientedBox(bounds, transform);
+    group.skinTexture = skinTexture;
+
+    r3d_render_group_push(&group);
+
+    r3d_render_call_t call = {0};
+
+    call.type = R3D_RENDER_CALL_MESH;
+    call.mesh.material = material;
+
+    // Preserve the mesh's actual VBO/EBO allocations,
+    // but use the conservative morphed bounds.
+    call.mesh.instance = mesh;
+    call.mesh.instance.aabb = bounds;
+
+    call.mesh.morph = morph;
+
+    r3d_render_call_push(&call);
+
+    return true;
+}
+
+bool R3D_DrawShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform)
+{
+    return draw_shape_key_mesh_internal(
+        mesh,
+        material,
+        0,
+        gpu,
+        instance,
+        transform
+    );
+}
+
+bool R3D_DrawAnimatedShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform)
+{
+    if (player.skinTexture == 0) return false;
+
+    return draw_shape_key_mesh_internal(
+        mesh,
+        material,
+        player.skinTexture,
+        gpu,
+        instance,
+        transform
+    );
+}
+
 void R3D_DrawMeshInstanced(R3D_Mesh mesh, R3D_Material material, R3D_InstanceBuffer instances, int count)
 {
     R3D_DrawMeshInstancedPro(mesh, material, instances, 0, count, R3D_MATRIX_IDENTITY);

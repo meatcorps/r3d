@@ -16,6 +16,8 @@
 #include <r3d/r3d_frustum.h>
 #include <r3d/r3d_decal.h>
 #include <r3d/r3d_mesh.h>
+#include <r3d/r3d_shape_key.h>
+#include <stdint.h>
 #include <glad.h>
 
 #include "../common/r3d_list.h"
@@ -199,11 +201,52 @@ typedef struct {
 } r3d_render_group_t;
 
 /*
+ * A compact active morph entry.
+ *
+ * The float is stored by bit pattern, not converted to
+ * an integer. The GPU decodes it with uintBitsToFloat().
+ */
+typedef struct {
+    uint32_t index;
+    uint32_t weightBits;
+} r3d_render_morph_entry_t;
+
+/*
+ * Per-draw GPU morph metadata.
+ *
+ * The active entries are stored in the renderer's
+ * frame-local GPU buffer.
+ */
+typedef struct {
+    GLuint deltaTexture;
+
+    int vertexCount;
+    int activeOffset;
+    int activeCount;
+} r3d_render_morph_t;
+
+/*
+ * Uniform locations cached per shader program.
+ */
+typedef struct {
+    GLuint program;
+
+    GLint deltaSampler;
+    GLint activeSampler;
+    GLint count;
+    GLint offset;
+    GLint vertexBase;
+    GLint vertexCount;
+} r3d_render_morph_uniforms_t;
+
+/*
  * Represents a draw call for a mesh in `r3d_render_call_t`
  */
 typedef struct {
     R3D_Material material;
     R3D_Mesh instance;
+
+    r3d_render_morph_t morph;
 } r3d_render_call_mesh_t;
 
 /*
@@ -277,6 +320,24 @@ extern struct r3d_mod_render {
     r3d_list_t* freeElements;                           //< Free list of released index ranges available for reuse (list<r3d_render_range_t>)
 
     r3d_render_instance_state_t instanceState;          //< Cached instance binding configuration
+
+    // Dynamic active morph entries, captured at submission.
+    r3d_render_morph_entry_t* morphEntries;
+    int morphEntryCount;
+    int morphEntryCapacity;
+    int morphMaxEntries;
+
+    // One GPU buffer/texture for all active weights in a frame.
+    GLuint morphActiveBuffer;
+    GLuint morphActiveTexture;
+    bool morphUploadOk;
+
+    // Shader locations are cached per program, per frame.
+    // The cache is reset when a new render queue begins.
+    r3d_render_morph_uniforms_t* morphUniforms;
+    int morphUniformCount;
+    int morphUniformCapacity;
+
     r3d_render_shape_t shapes[R3D_RENDER_SHAPE_COUNT];  //< Array of built-in shapes buffers
 
     r3d_list_t* clusters;                               //< Array of render clusters (list<r3d_render_cluster_t>)
@@ -415,6 +476,19 @@ bool r3d_render_call_is_visible(const r3d_render_call_t* call, const R3D_Frustum
  * Sort a render list according to the given mode and camera position.
  */
 void r3d_render_sort_list(r3d_render_list_enum_t list, Vector3 viewPosition, r3d_render_sort_enum_t mode);
+
+/**
+ * Captures all nonzero shape-key weights in the frame's
+ * dynamic active-morph array.
+ *
+ * Calculates conservative morphed mesh bounds.
+ *
+ * Returns false on invalid data, allocation failure,
+ * or an actual GPU buffer-size limit.
+ *
+ * On failure, no morph entries are committed.
+ */
+bool r3d_render_queue_morph(const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox* bounds, r3d_render_morph_t* outMorph);
 
 /*
  * Binds the global VAO, making it active for all subsequent draw calls.

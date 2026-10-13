@@ -194,6 +194,19 @@ R3DAPI void R3D_DrawMeshEx(R3D_Mesh mesh, R3D_Material material, Vector3 positio
 R3DAPI void R3D_DrawMeshPro(R3D_Mesh mesh, R3D_Material material, Matrix transform);
 
 /**
+ * Queues a mesh draw with GPU shape-key deformation.
+ *
+ * Shares the original mesh and immutable morph data.
+ * Captures the instance's current weights at submission.
+ *
+ * Does not call CPU ApplyShapeKeys().
+ *
+ * Returns false if the input is invalid or GPU resources
+ * cannot support the requested draw.
+ */
+R3DAPI bool R3D_DrawShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform);
+
+/**
  * @brief Queues an instanced mesh draw command.
  *
  * Draws multiple instances using the provided instance buffer.
@@ -246,6 +259,11 @@ R3DAPI void R3D_DrawAnimatedMeshEx(R3D_Mesh mesh, R3D_Material material, R3D_Ani
  * @brief Queues an animated mesh draw command using a full transform matrix.
  */
 R3DAPI void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Matrix transform);
+
+/**
+ * @brief GPU morphing followed by skeletal animation.
+ */
+R3DAPI bool R3D_DrawAnimatedShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform);
 
 /**
  * @brief Queues a model draw command with position and uniform scale.

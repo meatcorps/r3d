@@ -7,6 +7,7 @@
  */
 
 #include "./r3d_render.h"
+#include "./r3d_shader.h"
 #include <r3d_config.h>
 #include <raymath.h>
 #include <stdint.h>
@@ -14,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
+#include <limits.h>
+#include <math.h>
 #include <glad.h>
 
 #include "../common/r3d_helper.h"
@@ -938,6 +941,82 @@ bool r3d_render_init(void)
     vao_configure(false, true);
     glBindVertexArray(0);
 
+    /* --- Dynamic GPU morph-weight storage --- */
+
+    GLint maxEntries = 0;
+
+    glGetIntegerv(
+        GL_MAX_TEXTURE_BUFFER_SIZE, &maxEntries
+    );
+
+    R3D_MOD_RENDER.morphMaxEntries = maxEntries;
+
+    if (maxEntries > 0)
+    {
+        GLint oldActiveTexture = 0;
+        GLint oldTexture = 0;
+        GLint oldBuffer = 0;
+
+        glGetIntegerv(
+            GL_ACTIVE_TEXTURE, &oldActiveTexture
+        );
+
+        glActiveTexture(GL_TEXTURE0);
+
+        glGetIntegerv(
+            GL_TEXTURE_BINDING_BUFFER, &oldTexture
+        );
+
+        glGetIntegerv(
+            GL_TEXTURE_BUFFER, &oldBuffer
+        );
+
+        glGenBuffers(
+            1, &R3D_MOD_RENDER.morphActiveBuffer
+        );
+
+        glBindBuffer(
+            GL_TEXTURE_BUFFER,
+            R3D_MOD_RENDER.morphActiveBuffer
+        );
+
+        // Initial storage for one entry. Reallocated
+        // dynamically at R3D_End() as required.
+        glBufferData(
+            GL_TEXTURE_BUFFER,
+            sizeof(r3d_render_morph_entry_t),
+            NULL,
+            GL_STREAM_DRAW
+        );
+
+        glGenTextures(
+            1, &R3D_MOD_RENDER.morphActiveTexture
+        );
+
+        glBindTexture(
+            GL_TEXTURE_BUFFER,
+            R3D_MOD_RENDER.morphActiveTexture
+        );
+
+        glTexBuffer(
+            GL_TEXTURE_BUFFER,
+            GL_RG32UI,
+            R3D_MOD_RENDER.morphActiveBuffer
+        );
+
+        glBindTexture(
+            GL_TEXTURE_BUFFER, (GLuint)oldTexture
+        );
+
+        glBindBuffer(
+            GL_TEXTURE_BUFFER, (GLuint)oldBuffer
+        );
+
+        glActiveTexture(
+            (GLenum)oldActiveTexture
+        );
+    }
+
     return true;
 }
 
@@ -948,6 +1027,23 @@ void r3d_render_quit(void)
     if (R3D_MOD_RENDER.globalVao) glDeleteVertexArrays(1, &R3D_MOD_RENDER.globalVao);
     if (R3D_MOD_RENDER.globalVbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalVbo);
     if (R3D_MOD_RENDER.globalEbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalEbo);
+
+    if (R3D_MOD_RENDER.morphActiveTexture)
+    {
+        glDeleteTextures(
+            1, &R3D_MOD_RENDER.morphActiveTexture
+        );
+    }
+
+    if (R3D_MOD_RENDER.morphActiveBuffer)
+    {
+        glDeleteBuffers(
+            1, &R3D_MOD_RENDER.morphActiveBuffer
+        );
+    }
+
+    free(R3D_MOD_RENDER.morphEntries);
+    free(R3D_MOD_RENDER.morphUniforms);
 
     /* --- Release CPU arrays --- */
 
@@ -1227,6 +1323,15 @@ void r3d_render_clear(void)
     R3D_LIST_CLEAR(R3D_MOD_RENDER.sortCache);
 
     R3D_MOD_RENDER.groupCulled = false;
+
+    // Reuse allocations, but start a new frame's
+    // active-morph data at offset zero.
+    R3D_MOD_RENDER.morphEntryCount = 0;
+    R3D_MOD_RENDER.morphUploadOk = true;
+
+    // Shader programs can be replaced or recompiled.
+    // Cache uniforms once per shader per frame.
+    R3D_MOD_RENDER.morphUniformCount = 0;
 }
 
 bool r3d_render_cluster_begin(BoundingBox aabb)
@@ -1459,9 +1564,435 @@ void r3d_render_sort_list(r3d_render_list_enum_t list, Vector3 viewPosition, r3d
     );
 }
 
+bool r3d_render_queue_morph(const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox* bounds, r3d_render_morph_t* outMorph)
+{
+    if (!R3D_IsShapeKeyGpuValid(gpu) ||
+        !instance ||
+        instance->source != gpu->source ||
+        !instance->weights ||
+        !bounds || !outMorph ||
+        !gpu->minDeltas || !gpu->maxDeltas ||
+        gpu->keyCount != instance->source->keyCount)
+    {
+        return false;
+    }
+
+    int activeCount = 0;
+    BoundingBox newBounds = *bounds;
+
+    // ========================================
+    // VALIDATE AND CALCULATE BOUNDS
+    // ========================================
+
+    for (int k = 0; k < gpu->keyCount; k++)
+    {
+        float weight = instance->weights[k];
+
+        if (!isfinite(weight)) return false;
+        if (weight == 0.0f) continue;
+
+        if (activeCount == INT_MAX) return false;
+        activeCount++;
+
+        Vector3 lower = weight >= 0.0f
+            ? gpu->minDeltas[k]
+            : gpu->maxDeltas[k];
+
+        Vector3 upper = weight >= 0.0f
+            ? gpu->maxDeltas[k]
+            : gpu->minDeltas[k];
+
+        newBounds.min.x += lower.x * weight;
+        newBounds.min.y += lower.y * weight;
+        newBounds.min.z += lower.z * weight;
+
+        newBounds.max.x += upper.x * weight;
+        newBounds.max.y += upper.y * weight;
+        newBounds.max.z += upper.z * weight;
+    }
+
+    if (!isfinite(newBounds.min.x) ||
+        !isfinite(newBounds.min.y) ||
+        !isfinite(newBounds.min.z) ||
+        !isfinite(newBounds.max.x) ||
+        !isfinite(newBounds.max.y) ||
+        !isfinite(newBounds.max.z))
+    {
+        return false;
+    }
+
+    if (activeCount > 0)
+    {
+        if (!R3D_MOD_RENDER.morphActiveBuffer ||
+            !R3D_MOD_RENDER.morphActiveTexture)
+        {
+            TraceLog(
+                LOG_ERROR,
+                "GPU morph active-weight buffer unavailable"
+            );
+            return false;
+        }
+
+        const int remaining =
+            R3D_MOD_RENDER.morphMaxEntries -
+            R3D_MOD_RENDER.morphEntryCount;
+
+        if (activeCount > remaining)
+        {
+            TraceLog(
+                LOG_ERROR,
+                "GPU morph frame exceeds texture-buffer capacity"
+            );
+
+            return false;
+        }
+
+        const int needed =
+            R3D_MOD_RENDER.morphEntryCount +
+            activeCount;
+
+        // ========================================
+        // GROW FRAME STAGING STORAGE IF REQUIRED
+        // ========================================
+
+        if (needed >
+            R3D_MOD_RENDER.morphEntryCapacity)
+        {
+            int capacity =
+                R3D_MOD_RENDER.morphEntryCapacity;
+
+            if (capacity == 0) capacity = 64;
+
+            while (capacity < needed)
+            {
+                if (capacity >
+                    R3D_MOD_RENDER.morphMaxEntries / 2)
+                {
+                    capacity =
+                        R3D_MOD_RENDER.morphMaxEntries;
+                    break;
+                }
+
+                capacity *= 2;
+            }
+
+            if (capacity < needed ||
+                (size_t)capacity >
+                    SIZE_MAX /
+                    sizeof(r3d_render_morph_entry_t))
+            {
+                return false;
+            }
+
+            void* newEntries = realloc(
+                R3D_MOD_RENDER.morphEntries,
+                (size_t)capacity *
+                sizeof(r3d_render_morph_entry_t)
+            );
+
+            if (!newEntries)
+            {
+                TraceLog(
+                    LOG_ERROR,
+                    "Unable to allocate GPU morph staging data"
+                );
+                return false;
+            }
+
+            R3D_MOD_RENDER.morphEntries = newEntries;
+            R3D_MOD_RENDER.morphEntryCapacity =
+                capacity;
+        }
+    }
+
+    // ========================================
+    // SNAPSHOT ACTIVE WEIGHTS INTO THE QUEUE
+    // ========================================
+
+    const int offset = R3D_MOD_RENDER.morphEntryCount;
+
+    for (int k = 0; k < gpu->keyCount; k++)
+    {
+        float weight = instance->weights[k];
+        if (weight == 0.0f) continue;
+
+        r3d_render_morph_entry_t* entry =
+            &R3D_MOD_RENDER.morphEntries[
+                R3D_MOD_RENDER.morphEntryCount++
+            ];
+
+        entry->index = (uint32_t)k;
+
+        // Preserve all 32 bits of the float.
+        memcpy(
+            &entry->weightBits,
+            &weight,
+            sizeof(weight)
+        );
+    }
+
+    *bounds = newBounds;
+
+    *outMorph = (r3d_render_morph_t){
+        .deltaTexture = gpu->texture,
+        .vertexCount = gpu->vertexCount,
+        .activeOffset = offset,
+        .activeCount = activeCount
+    };
+
+    return true;
+}
+
 void r3d_render_prepare_drawing(void)
 {
+    // Upload the queued active weights once, before
+    // the shadow, deferred, forward and probe passes.
+    //
+    // All those passes read the same immutable data.
+
+    if (R3D_MOD_RENDER.morphEntryCount > 0)
+    {
+        GLint previousBuffer = 0;
+
+        glGetIntegerv(
+            GL_TEXTURE_BUFFER,
+            &previousBuffer
+        );
+
+        glBindBuffer(
+            GL_TEXTURE_BUFFER,
+            R3D_MOD_RENDER.morphActiveBuffer
+        );
+
+        glBufferData(
+            GL_TEXTURE_BUFFER,
+            (GLsizeiptr)(
+                (size_t)R3D_MOD_RENDER.morphEntryCount *
+                sizeof(r3d_render_morph_entry_t)
+            ),
+            R3D_MOD_RENDER.morphEntries,
+            GL_STREAM_DRAW
+        );
+
+        GLenum error = glGetError();
+
+        if (error != GL_NO_ERROR)
+        {
+            R3D_MOD_RENDER.morphUploadOk = false;
+
+            TraceLog(
+                LOG_ERROR,
+                "GPU active morph upload failed: %u",
+                (unsigned)error
+            );
+        }
+
+        glBindBuffer(
+            GL_TEXTURE_BUFFER,
+            (GLuint)previousBuffer
+        );
+    }
+
     glBindVertexArray(R3D_MOD_RENDER.globalVao);
+}
+
+/*
+ * Fetches the uniform locations for the current program.
+ *
+ * Each shader is queried only on first use in a frame,
+ * not once per mesh, light, or rendering pass.
+ */
+static const r3d_render_morph_uniforms_t*
+get_morph_uniforms(void)
+{
+    const GLuint program =
+        R3D_MOD_SHADER.currentProgram;
+
+    if (!program) return NULL;
+
+    for (int i = 0;
+         i < R3D_MOD_RENDER.morphUniformCount;
+         i++)
+    {
+        r3d_render_morph_uniforms_t* existing =
+            &R3D_MOD_RENDER.morphUniforms[i];
+
+        if (existing->program == program)
+        {
+            return existing;
+        }
+    }
+
+    // Fallback storage is used only if allocation fails.
+    // Morphing still works, but locations are not cached.
+    static r3d_render_morph_uniforms_t fallback;
+
+    r3d_render_morph_uniforms_t* result = &fallback;
+
+    if (R3D_MOD_RENDER.morphUniformCount >=
+        R3D_MOD_RENDER.morphUniformCapacity)
+    {
+        int newCapacity =
+            R3D_MOD_RENDER.morphUniformCapacity
+                ? R3D_MOD_RENDER.morphUniformCapacity * 2
+                : 8;
+
+        if (newCapacity >
+            R3D_MOD_RENDER.morphUniformCapacity &&
+            (size_t)newCapacity <=
+                SIZE_MAX /
+                sizeof(r3d_render_morph_uniforms_t))
+        {
+            void* p = realloc(
+                R3D_MOD_RENDER.morphUniforms,
+                (size_t)newCapacity *
+                sizeof(r3d_render_morph_uniforms_t)
+            );
+
+            if (p)
+            {
+                R3D_MOD_RENDER.morphUniforms = p;
+                R3D_MOD_RENDER.morphUniformCapacity =
+                    newCapacity;
+            }
+        }
+    }
+
+    if (R3D_MOD_RENDER.morphUniformCount <
+        R3D_MOD_RENDER.morphUniformCapacity)
+    {
+        result = &R3D_MOD_RENDER.morphUniforms[
+            R3D_MOD_RENDER.morphUniformCount++
+        ];
+    }
+
+    *result = (r3d_render_morph_uniforms_t){
+        .program = program,
+
+        .deltaSampler = glGetUniformLocation(
+            program, "uMorphDeltas"
+        ),
+
+        .activeSampler = glGetUniformLocation(
+            program, "uMorphActive"
+        ),
+
+        .count = glGetUniformLocation(
+            program, "uMorphCount"
+        ),
+
+        .offset = glGetUniformLocation(
+            program, "uMorphActiveOffset"
+        ),
+
+        .vertexBase = glGetUniformLocation(
+            program, "uMorphVertexBase"
+        ),
+
+        .vertexCount = glGetUniformLocation(
+            program, "uMorphVertexCount"
+        )
+    };
+
+    // Set sampler units once per shader program.
+    // The actual texture binding is handled per draw.
+    if (result->deltaSampler >= 0)
+    {
+        glUniform1i(
+            result->deltaSampler,
+            R3D_SHADER_SAMPLER_MORPH_DELTAS
+        );
+    }
+
+    if (result->activeSampler >= 0)
+    {
+        glUniform1i(
+            result->activeSampler,
+            R3D_SHADER_SAMPLER_MORPH_ACTIVE
+        );
+    }
+
+    return result;
+}
+
+/*
+ * Binds the queued GPU morph state.
+ *
+ * Called after the scene pass has selected its shader
+ * and immediately before the actual mesh draw.
+ */
+static bool bind_draw_morph(const r3d_render_call_t* call)
+{
+    const r3d_render_morph_uniforms_t* uniforms =
+        get_morph_uniforms();
+
+    if (!uniforms) return false;
+
+    const r3d_render_morph_t* morph = NULL;
+
+    if (call->type == R3D_RENDER_CALL_MESH)
+    {
+        morph = &call->mesh.morph;
+    }
+
+    const int count = morph ? morph->activeCount : 0;
+
+    // Prevent morph state leaking into ordinary meshes.
+    if (uniforms->count >= 0)
+    {
+        glUniform1i(uniforms->count, count);
+    }
+
+    if (count == 0) return true;
+
+    if (!R3D_MOD_RENDER.morphUploadOk)
+    {
+        return false;
+    }
+
+    // Do not render silently without morphing if a
+    // custom shader lacks the required uniforms.
+    if (uniforms->count < 0 ||
+        uniforms->deltaSampler < 0 ||
+        uniforms->activeSampler < 0 ||
+        uniforms->offset < 0 ||
+        uniforms->vertexBase < 0 ||
+        uniforms->vertexCount < 0)
+    {
+        TraceLog(
+            LOG_ERROR,
+            "Scene shader lacks GPU morph uniforms"
+        );
+
+        return false;
+    }
+
+    glUniform1i(
+        uniforms->offset,
+        morph->activeOffset
+    );
+
+    glUniform1i(
+        uniforms->vertexBase,
+        call->mesh.instance.vertexOffset
+    );
+
+    glUniform1i(
+        uniforms->vertexCount,
+        morph->vertexCount
+    );
+
+    r3d_shader_bind_sampler(
+        R3D_SHADER_SAMPLER_MORPH_DELTAS,
+        morph->deltaTexture
+    );
+
+    r3d_shader_bind_sampler(
+        R3D_SHADER_SAMPLER_MORPH_ACTIVE,
+        R3D_MOD_RENDER.morphActiveTexture
+    );
+
+    return true;
 }
 
 void r3d_render_draw(const r3d_render_call_t* call)
@@ -1471,6 +2002,8 @@ void r3d_render_draw(const r3d_render_call_t* call)
     r3d_render_range_t indexRange;
 
     get_draw_call_info(call, &primitive, &vertexRange, &indexRange);
+
+    if (!bind_draw_morph(call)) return;
 
     if (indexRange.count == 0)
     {
@@ -1499,6 +2032,8 @@ void r3d_render_draw_instanced(const r3d_render_call_t* call)
     const r3d_render_group_t* group = r3d_render_get_call_group(call);
 
     instances_enable(group->instances.buffers, group->instances.layout, group->instanceOffset);
+
+    if (!bind_draw_morph(call)) return;
 
     if (indexRange.count == 0)
     {

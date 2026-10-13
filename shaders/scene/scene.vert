@@ -67,6 +67,20 @@ smooth out mat3 vDecalAxes;
 
 uniform sampler1D uBoneMatricesTex;
 
+// Immutable target data:
+// position, normal, tangent (three vec4s per vertex).
+uniform samplerBuffer uMorphDeltas;
+
+// Dynamic active entries:
+// x = uint target index
+// y = raw IEEE-754 weight bits
+uniform usamplerBuffer uMorphActive;
+
+uniform int uMorphCount;
+uniform int uMorphActiveOffset;
+uniform int uMorphVertexBase;
+uniform int uMorphVertexCount;
+
 uniform mat4 uMatModel;
 uniform mat4 uMatNormal;
 
@@ -178,12 +192,110 @@ void BillboardYAxis(inout vec3 position, inout vec3 normal, inout vec3 tangent, 
 #include <user/scene.vert>
 
 // ================================
+// GPU Morph Targets
+// ================================
+
+#if !defined(DECAL)
+void ApplyGpuMorphs()
+{
+    if (uMorphCount <= 0) return;
+
+    // R3D stores every mesh in a shared VBO.
+    // gl_VertexID includes the draw's base vertex.
+    int vertexIndex = gl_VertexID - uMorphVertexBase;
+
+    if (vertexIndex < 0 ||
+    vertexIndex >= uMorphVertexCount)
+    {
+        return;
+    }
+
+    vec3 position = POSITION;
+    vec3 normal = NORMAL;
+    vec3 tangent = TANGENT.xyz;
+
+    // No fixed MAX_ACTIVE constant.
+    // Only submitted nonzero targets are evaluated.
+    for (int i = 0; i < uMorphCount; i++)
+    {
+        uvec4 morphEntry = texelFetch(
+            uMorphActive,
+            uMorphActiveOffset + i
+        );
+
+        int targetIndex = int(morphEntry.x);
+        float weight = uintBitsToFloat(morphEntry.y);
+
+        int baseTexel = (
+        targetIndex * uMorphVertexCount +
+        vertexIndex
+        ) * 3;
+
+        position += texelFetch(
+            uMorphDeltas, baseTexel + 0
+        ).xyz * weight;
+
+        normal += texelFetch(
+            uMorphDeltas, baseTexel + 1
+        ).xyz * weight;
+
+        tangent += texelFetch(
+            uMorphDeltas, baseTexel + 2
+        ).xyz * weight;
+    }
+
+    // Renormalize normals after additive blending.
+    float normalLengthSq = dot(normal, normal);
+
+    if (normalLengthSq > 1e-12)
+    {
+        normal *= inversesqrt(normalLengthSq);
+    }
+    else
+    {
+        normal = vec3(0.0, 0.0, 1.0);
+    }
+
+    // Gram-Schmidt orthogonalization.
+    tangent -= normal * dot(normal, tangent);
+
+    float tangentLengthSq = dot(tangent, tangent);
+
+    if (tangentLengthSq > 1e-12)
+    {
+        tangent *= inversesqrt(tangentLengthSq);
+    }
+    else
+    {
+        vec3 fallback = abs(normal.x) < 0.9
+        ? vec3(1.0, 0.0, 0.0)
+        : vec3(0.0, 1.0, 0.0);
+
+        tangent = normalize(
+            fallback -
+            normal * dot(normal, fallback)
+        );
+    }
+
+    POSITION = position;
+    NORMAL = normal;
+    TANGENT.xyz = tangent;
+
+    // TANGENT.w retains the original handedness.
+}
+#endif
+
+// ================================
 // Main Function
 // ================================
 
 void main()
 {
     SceneVertex();
+
+    #if !defined(DECAL)
+    ApplyGpuMorphs();
+    #endif
 
     vec3 billboardCenter = vec3(MATRIX_MODEL[3]);
     vec3 localPosition = POSITION;

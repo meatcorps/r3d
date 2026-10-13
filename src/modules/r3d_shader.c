@@ -112,22 +112,31 @@ do {                                                                            
 
 #define LOAD_SHADER_EX(shader_name, desc)                                       \
 do {                                                                            \
+    bool r3d_shader_loaded_ = false;                                           \
     R3D_STACK_SCOPE(&R3D.stack, shader_source_reserve(&(desc)))                 \
     {                                                                           \
         const char *vsCode = NULL, *fsCode = NULL;                              \
+                                                                                \
         if (!shader_source_build(&vsCode, &fsCode, &R3D.stack, &(desc)))        \
         {                                                                       \
             R3D_TRACELOG(LOG_ERROR, "Failed to build '" #shader_name "' shader sources"); \
-            R3D_STACK_SCOPE_EXIT(R3D.stack);                                    \
         }                                                                       \
-        shader_name->id = load_shader(vsCode, fsCode);                          \
-        if (shader_name->id == 0)                                               \
+        else                                                                    \
         {                                                                       \
-            R3D_TRACELOG(LOG_ERROR, "Failed to load shader '" #shader_name "'");\
-            R3D_STACK_SCOPE_EXIT(R3D.stack);                                    \
+            shader_name->id = load_shader(vsCode, fsCode);                      \
+            if (shader_name->id != 0)                                           \
+            {                                                                   \
+                r3d_shader_loaded_ = true;                                      \
+            }                                                                   \
+            else                                                                \
+            {                                                                   \
+                R3D_TRACELOG(LOG_ERROR, "Failed to load shader '" #shader_name "'"); \
+            }                                                                   \
         }                                                                       \
     }                                                                           \
-} while(0)
+                                                                                \
+    if (!r3d_shader_loaded_) return false;                                      \
+} while (0)
 
 #define USE_SHADER(shader_name)                                                 \
 do {                                                                            \

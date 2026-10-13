@@ -59,6 +59,54 @@ typedef struct R3D_ShapeKeyInstance {
 } R3D_ShapeKeyInstance;
 
 /**
+ * Immutable GPU morph-target data.
+ *
+ * Each imported target stores three RGBA32F texels
+ * per vertex: position, normal and tangent deltas.
+ *
+ * Many characters may share this resource.
+ * The source ShapeKeySet must outlive the GPU resource.
+ */
+typedef struct R3D_ShapeKeyGpu {
+    unsigned int buffer;
+    unsigned int texture;
+
+    int vertexCount;
+    int keyCount;
+
+    const R3D_ShapeKeySet* source;
+
+    // Conservative displacement bounds, one per target.
+    Vector3* minDeltas;
+    Vector3* maxDeltas;
+} R3D_ShapeKeyGpu;
+
+/**
+ * Uploads all imported morph targets once.
+ * Requires an initialized R3D/OpenGL context.
+ */
+R3DAPI R3D_ShapeKeyGpu R3D_LoadShapeKeyGpu(
+    const R3D_ShapeKeySet* source
+);
+
+/**
+ * Returns true when GPU storage is initialized.
+ */
+R3DAPI bool R3D_IsShapeKeyGpuValid(
+    const R3D_ShapeKeyGpu* gpu
+);
+
+/**
+ * Releases the GPU data, not the imported source.
+ *
+ * Call after all queued draws using it have completed,
+ * and before R3D_Close().
+ */
+R3DAPI void R3D_UnloadShapeKeyGpu(
+    R3D_ShapeKeyGpu gpu
+);
+
+/**
  * Releases owned imported shape-key data.
  * Normally called automatically by R3D_UnloadModel.
  */
