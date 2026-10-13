@@ -151,6 +151,16 @@ void R3D_UnloadModel(R3D_Model model, bool unloadMaterials)
 {
     R3D_UnloadSkeleton(model.skeleton);
 
+    if (model.shapeKeySets)
+    {
+        for (int i = 0; i < model.meshCount; i++)
+        {
+            R3D_UnloadShapeKeySet(
+                model.shapeKeySets[i]
+            );
+        }
+    }
+
     if (model.meshes != NULL)
     {
         for (int i = 0; i < model.meshCount; i++)
@@ -178,6 +188,8 @@ void R3D_UnloadModel(R3D_Model model, bool unloadMaterials)
     r3d_free(model.meshMaterials);
     r3d_free(model.materials);
     r3d_free(model.meshData);
+    r3d_free(model.meshNames);
+    r3d_free(model.shapeKeySets);
     r3d_free(model.meshes);
 }
 

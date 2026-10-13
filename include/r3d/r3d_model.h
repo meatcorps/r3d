@@ -14,6 +14,7 @@
 #include "./r3d_platform.h"
 #include "./r3d_importer.h"
 #include "./r3d_mesh.h"
+#include "./r3d_shape_key.h"
 
 /**
  * @defgroup Model
@@ -45,6 +46,8 @@ typedef struct R3D_Model {
     R3D_Mesh* meshes;           ///< Array of meshes composing the model.
     R3D_MeshData* meshData;     ///< Array of meshes data in RAM (optional, can be NULL).
     R3D_MeshName* meshNames;    ///< Array of meshes names (optional, can be NULL).
+
+    R3D_ShapeKeySet* shapeKeySets; /// Immutable per-mesh morph templates. NULL if no imported meshes contain shape keys. Owned by this model.
 
     R3D_Material* materials;    ///< Array of materials used by the model.
     int* meshMaterials;         ///< Array of material indices, one per mesh.

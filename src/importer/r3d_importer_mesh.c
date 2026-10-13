@@ -10,11 +10,15 @@
 
 #include <r3d/r3d_mesh_data.h>
 #include <r3d/r3d_mesh.h>
+#include <r3d/r3d_shape_key.h>
 #include <r3d_config.h>
 #include <raylib.h>
 
 #include <assimp/mesh.h>
 #include <float.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "../common/r3d_helper.h"
 #include "../common/r3d_math.h"
@@ -284,6 +288,220 @@ static bool process_bones(const R3D_Importer* importer, const struct aiMesh* aiM
 }
 
 // ========================================
+// SHAPE KEY IMPORT (INTERNAL)
+// ========================================
+
+/**
+ * Extracts Assimp replacement morph vertices into
+ * floating-point deltas relative to the R3D base mesh.
+ *
+ * The base mesh has already been processed by R3D,
+ * including node transforms for non-skinned geometry.
+ */
+static bool load_shape_keys(R3D_ShapeKeySet* outSet, const struct aiMesh* aiMesh, R3D_MeshData baseData, Matrix transform, bool hasBones)
+{
+    if (!outSet) return true;
+
+    *outSet = (R3D_ShapeKeySet){0};
+
+    if (!aiMesh || aiMesh->mNumAnimMeshes == 0)
+    {
+        return true;
+    }
+
+    const int vertexCount = baseData.vertexCount;
+    const int keyCount = (int)aiMesh->mNumAnimMeshes;
+
+    R3D_ShapeKeySet result = {0};
+
+    result.baseMesh = R3D_CopyMeshData(baseData);
+
+    if (!R3D_IsMeshDataValid(result.baseMesh))
+    {
+        return false;
+    }
+
+    result.keys = calloc(
+        (size_t)keyCount,
+        sizeof(*result.keys)
+    );
+
+    if (!result.keys)
+    {
+        R3D_UnloadMeshData(result.baseMesh);
+        return false;
+    }
+
+    result.keyCount = keyCount;
+
+    Matrix normalMatrix = MatrixIdentity();
+
+    if (!hasBones)
+    {
+        normalMatrix = r3d_matrix_normal(&transform);
+    }
+
+    for (int k = 0; k < keyCount; k++)
+    {
+        const struct aiAnimMesh* source =
+            aiMesh->mAnimMeshes[k];
+
+        if (!source ||
+            source->mNumVertices !=
+                (unsigned int)vertexCount)
+        {
+            goto fail;
+        }
+
+        R3D_ShapeKey* key = &result.keys[k];
+
+        if (source->mName.length > 0)
+        {
+            snprintf(
+                key->name,
+                sizeof(key->name),
+                "%.*s",
+                (int)source->mName.length,
+                source->mName.data
+            );
+        }
+        else
+        {
+            snprintf(
+                key->name,
+                sizeof(key->name),
+                "ShapeKey_%d",
+                k
+            );
+        }
+
+        key->defaultWeight = isfinite(source->mWeight)
+            ? source->mWeight
+            : 0.0f;
+
+        // Allocate only attributes provided by Assimp.
+        // Missing target attributes mean no deformation
+        // of that particular vertex attribute.
+        if (source->mVertices)
+        {
+            key->positionDeltas = calloc(
+                (size_t)vertexCount,
+                sizeof(Vector3)
+            );
+
+            if (!key->positionDeltas) goto fail;
+        }
+
+        if (source->mNormals)
+        {
+            key->normalDeltas = calloc(
+                (size_t)vertexCount,
+                sizeof(Vector3)
+            );
+
+            if (!key->normalDeltas) goto fail;
+        }
+
+        if (source->mTangents)
+        {
+            key->tangentDeltas = calloc(
+                (size_t)vertexCount,
+                sizeof(Vector3)
+            );
+
+            if (!key->tangentDeltas) goto fail;
+        }
+
+        for (int v = 0; v < vertexCount; v++)
+        {
+            const R3D_Vertex* base =
+                &baseData.vertices[v];
+
+            if (key->positionDeltas)
+            {
+                Vector3 target = r3d_importer_cast(
+                    source->mVertices[v]
+                );
+
+                if (!hasBones)
+                {
+                    target = r3d_vector3_transform(
+                        target,
+                        &transform
+                    );
+                }
+
+                key->positionDeltas[v] = Vector3Subtract(
+                    target,
+                    base->position
+                );
+            }
+
+            if (key->normalDeltas)
+            {
+                Vector3 target = r3d_importer_cast(
+                    source->mNormals[v]
+                );
+
+                if (!hasBones)
+                {
+                    target = r3d_vector3_transform_linear(
+                        target,
+                        &normalMatrix
+                    );
+                }
+
+                // Use the actual packed R3D base value
+                // to match what ApplyShapeKeys starts from.
+                Vector3 packedBase = R3D_UnpackNormal(
+                    base->normal
+                );
+
+                key->normalDeltas[v] = Vector3Subtract(
+                    target,
+                    packedBase
+                );
+            }
+
+            if (key->tangentDeltas)
+            {
+                Vector3 target = r3d_importer_cast(
+                    source->mTangents[v]
+                );
+
+                if (!hasBones)
+                {
+                    target = r3d_vector3_transform_linear(
+                        target,
+                        &normalMatrix
+                    );
+                }
+
+                Vector4 packedBase = R3D_UnpackTangent(
+                    base->tangent
+                );
+
+                key->tangentDeltas[v] = Vector3Subtract(
+                    target,
+                    (Vector3){
+                        packedBase.x,
+                        packedBase.y,
+                        packedBase.z
+                    }
+                );
+            }
+        }
+    }
+
+    *outSet = result;
+    return true;
+
+fail:
+    R3D_UnloadShapeKeySet(result);
+    return false;
+}
+
+// ========================================
 // MESH LOADING (INTERNAL)
 // ========================================
 
@@ -328,6 +546,7 @@ static bool load_mesh_internal(
     R3D_Mesh* outMesh,
     R3D_MeshData* outMeshData,
     R3D_MeshName* outMeshName,
+    R3D_ShapeKeySet* outShapeKeys,
     const struct aiMesh* aiMesh,
     Matrix transform,
     bool hasBones)
@@ -390,6 +609,14 @@ static bool load_mesh_internal(
         return false;
     }
 
+    // Preserve immutable morph data before the temporary
+    // CPU mesh buffer is potentially released.
+    if (!load_shape_keys(outShapeKeys, aiMesh, data, transform, hasBones))
+    {
+        R3D_UnloadMeshData(data);
+        return false;
+    }
+
     // Upload the mesh
     R3D_PrimitiveType ptype = get_primitive_type(aiMesh->mPrimitiveTypes);
     *outMesh = R3D_LoadMesh(ptype, data, &aabb);
@@ -420,14 +647,29 @@ static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const
         uint32_t meshIndex = node->mMeshes[i];
         const struct aiMesh* mesh = r3d_importer_get_mesh(importer, meshIndex);
 
-        R3D_MeshData* meshData = model->meshData ? &model->meshData[meshIndex] : NULL;
-        R3D_MeshName* meshName = model->meshNames ? &model->meshNames[meshIndex] : NULL;
+        R3D_MeshData* meshData = model->meshData
+            ? &model->meshData[meshIndex]
+            : NULL;
 
-        if (!load_mesh_internal(importer, &model->meshes[meshIndex], meshData, meshName, mesh, globalTransform, mesh->mNumBones > 0))
-        {
-            R3D_TRACELOG(LOG_ERROR, "Unable to load mesh [%u]; The model will be invalid", meshIndex);
-            return false;
-        }
+        R3D_MeshName* meshName =
+            model->meshNames
+                ? &model->meshNames[meshIndex]
+                : NULL;
+
+        R3D_ShapeKeySet* shapeKeys =
+            model->shapeKeySets
+                ? &model->shapeKeySets[meshIndex]
+                : NULL;
+
+        if (!load_mesh_internal(
+            importer,
+            &model->meshes[meshIndex],
+            meshData,
+            meshName,
+            shapeKeys,
+            mesh,
+            globalTransform,
+            mesh->mNumBones > 0))
 
         model->meshMaterials[meshIndex] = mesh->mMaterialIndex;
     }
@@ -461,12 +703,48 @@ bool r3d_importer_load_meshes(const R3D_Importer* importer, R3D_Model* model)
 
     const struct aiScene* scene = r3d_importer_get_scene(importer);
 
+    // Allocate morph storage only if any mesh has targets.
+    bool hasShapeKeys = false;
+
+    for (unsigned int i = 0; i < scene->mNumMeshes; i++)
+    {
+        if (scene->mMeshes[i] &&
+            scene->mMeshes[i]->mNumAnimMeshes > 0)
+        {
+            hasShapeKeys = true;
+            break;
+        }
+    }
+
     // Allocate space for meshes
     model->meshCount     = scene->mNumMeshes;
     model->meshes        = r3d_zalloc(model->meshCount * sizeof(*model->meshes));
     model->meshMaterials = r3d_zalloc(model->meshCount * sizeof(*model->meshMaterials));
-    if (keepMeshData)  model->meshData  = r3d_zalloc(model->meshCount * sizeof(*model->meshData));
-    if (keepMeshNames) model->meshNames = r3d_zalloc(model->meshCount * sizeof(*model->meshNames));
+    if (keepMeshData)
+    {
+        model->meshData = r3d_zalloc(
+            model->meshCount * sizeof(*model->meshData)
+        );
+    }
+
+    if (keepMeshNames)
+    {
+        model->meshNames = r3d_zalloc(
+            model->meshCount * sizeof(*model->meshNames)
+        );
+    }
+
+    if (hasShapeKeys)
+    {
+        model->shapeKeySets = r3d_zalloc(
+            model->meshCount * sizeof(*model->shapeKeySets)
+        );
+
+        if (!model->shapeKeySets)
+        {
+            goto cleanup_and_fail;
+        }
+    }
 
     // Load all meshes recursively
     if (!load_recursive(importer, model, r3d_importer_get_root(importer), &R3D_MATRIX_IDENTITY))
@@ -512,12 +790,26 @@ cleanup_and_fail:
         }
     }
 
+    if (model->shapeKeySets)
+    {
+        for (int i = 0; i < model->meshCount; i++)
+        {
+            R3D_UnloadShapeKeySet(
+                model->shapeKeySets[i]
+            );
+        }
+    }
+
     r3d_free(model->meshMaterials);
     r3d_free(model->meshData);
+    r3d_free(model->meshNames);
+    r3d_free(model->shapeKeySets);
     r3d_free(model->meshes);
 
     model->meshMaterials = NULL;
     model->meshData = NULL;
+    model->meshNames = NULL;
+    model->shapeKeySets = NULL;
     model->meshes = NULL;
     model->meshCount = 0;
 

@@ -65,6 +65,7 @@ add_example(r3d_decal "examples/decal.c")
 add_example(r3d_multiview "examples/multiview.c")
 add_example(r3d_to_texture "examples/to_texture.c")
 add_example(r3d_matrix_decompose "examples/matrix_decompose.c")
+add_example(r3d_shape_keys_cpu "examples/shape_keys_cpu.c")
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
