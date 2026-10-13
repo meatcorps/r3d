@@ -261,9 +261,31 @@ R3DAPI void R3D_DrawAnimatedMeshEx(R3D_Mesh mesh, R3D_Material material, R3D_Ani
 R3DAPI void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Matrix transform);
 
 /**
+ * @brief Draws an animated mesh with explicit local-space culling bounds.
+ *
+ * The bounds must contain all positions produced by skeletal animation,
+ * IK and other deformations for this draw.
+ *
+ * Does not modify the original mesh.
+ * Invalid bounds cause the draw to be rejected.
+ */
+R3DAPI void R3D_DrawAnimatedMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, BoundingBox bounds, Matrix transform);
+
+/**
  * @brief GPU morphing followed by skeletal animation.
  */
 R3DAPI bool R3D_DrawAnimatedShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform);
+
+/**
+ * @brief Draws a GPU-morphed and skinned mesh with explicit bounds.
+ *
+ * The bounds must contain the final geometry after BOTH
+ * morph deformation and skeletal skinning.
+ *
+ * The existing GPU morph-weight evaluation is preserved.
+ * Invalid bounds cause the draw to be rejected.
+ */
+R3DAPI bool R3D_DrawAnimatedShapeKeyMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox bounds, Matrix transform);
 
 /**
  * @brief Queues a model draw command with position and uniform scale.
@@ -347,6 +369,17 @@ R3DAPI void R3D_DrawAnimatedModelEx(R3D_Model model, R3D_AnimationPlayer player,
  * The command is executed during R3D_End().
  */
 R3DAPI void R3D_DrawAnimatedModelPro(R3D_Model model, R3D_AnimationPlayer player, Matrix transform);
+
+/**
+ * @brief Draws an animated model with explicit local-space culling bounds.
+ *
+ * The bounds must contain all animated meshes, including their
+ * skeletal, IK, spring and other deformations.
+ *
+ * Does not modify the original model.
+ * Invalid bounds cause the draw to be rejected.
+ */
+R3DAPI void R3D_DrawAnimatedModelProBounds(R3D_Model model, R3D_AnimationPlayer player, BoundingBox bounds, Matrix transform);
 
 /**
  * @brief Queues an instanced animated model draw command.

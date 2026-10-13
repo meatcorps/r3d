@@ -154,11 +154,6 @@ int main(void)
                 R3D_PushLightEx(light, shadow, true);
                 R3D_DrawMesh(plane, R3D_MATERIAL_BASE, Vector3Zero(), 1.0f);
                 R3D_DrawAnimatedModelPro(model, modelPlayer, characterWorld);
-
-                if (hasFlashlight)
-                {
-                    R3D_DrawMeshPro(flashlightMesh, R3D_MATERIAL_BASE, flashlightWorld);
-                }
                 R3D_DrawAnimatedModelInstanced(model, modelPlayer, instances, 4);
             R3D_End();
 

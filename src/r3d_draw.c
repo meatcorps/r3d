@@ -11,6 +11,7 @@
 #include <raymath.h>
 #include <stddef.h>
 #include <float.h>
+#include <math.h>
 #include <rlgl.h>
 #include <glad.h>
 
@@ -354,6 +355,25 @@ void R3D_PushProbe(R3D_Probe probe, bool updateProbe)
     r3d_env_push_probe(&probe, updateProbe);
 }
 
+/**
+ * Validate caller-provided animated culling bounds.
+ *
+ * Reject NaN, infinity and reversed dimensions.
+ */
+static bool is_valid_animated_bounds(BoundingBox bounds)
+{
+    return
+        isfinite(bounds.min.x) &&
+        isfinite(bounds.min.y) &&
+        isfinite(bounds.min.z) &&
+        isfinite(bounds.max.x) &&
+        isfinite(bounds.max.y) &&
+        isfinite(bounds.max.z) &&
+        bounds.min.x <= bounds.max.x &&
+        bounds.min.y <= bounds.max.y &&
+        bounds.min.z <= bounds.max.z;
+}
+
 void R3D_DrawMesh(R3D_Mesh mesh, R3D_Material material, Vector3 position, float scale)
 {
     Matrix transform = r3d_matrix_st((Vector3) {scale, scale, scale}, position);
@@ -390,13 +410,7 @@ void R3D_DrawMeshPro(R3D_Mesh mesh, R3D_Material material, Matrix transform)
  * The renderer captures weights and updates bounds before
  * committing either the render group or the draw call.
  */
-static bool draw_shape_key_mesh_internal(
-    R3D_Mesh mesh,
-    R3D_Material material,
-    GLuint skinTexture,
-    const R3D_ShapeKeyGpu* gpu,
-    const R3D_ShapeKeyInstance* instance,
-    Matrix transform)
+static bool draw_shape_key_mesh_internal(R3D_Mesh mesh, R3D_Material material, GLuint skinTexture, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, const BoundingBox* overrideBounds, Matrix transform)
 {
     if (!IS_MESH_VALID(mesh) ||
         !R3D_IsShapeKeyGpuValid(gpu) ||
@@ -405,13 +419,28 @@ static bool draw_shape_key_mesh_internal(
         return false;
     }
 
+    if (overrideBounds && !is_valid_animated_bounds(*overrideBounds))
+    {
+        TraceLog(LOG_WARNING, "R3D: Invalid animated morph bounds");
+        return false;
+    }
+
     BoundingBox bounds = mesh.aabb;
     r3d_render_morph_t morph = {0};
 
-    if (!r3d_render_queue_morph(
-        gpu, instance, &bounds, &morph))
+    if (!r3d_render_queue_morph(gpu, instance, &bounds, &morph))
     {
         return false;
+    }
+
+    // Override represents the complete post-morph,
+    // post-skinning local-space bounds.
+    //
+    // Without an override, retain the existing
+    // conservative GPU morph bounds calculation.
+    if (overrideBounds)
+    {
+        bounds = *overrideBounds;
     }
 
     r3d_render_group_t group = {0};
@@ -441,28 +470,21 @@ static bool draw_shape_key_mesh_internal(
 
 bool R3D_DrawShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform)
 {
-    return draw_shape_key_mesh_internal(
-        mesh,
-        material,
-        0,
-        gpu,
-        instance,
-        transform
-    );
+    return draw_shape_key_mesh_internal(mesh, material, 0, gpu, instance, NULL, transform);
 }
 
 bool R3D_DrawAnimatedShapeKeyMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, Matrix transform)
 {
     if (player.skinTexture == 0) return false;
 
-    return draw_shape_key_mesh_internal(
-        mesh,
-        material,
-        player.skinTexture,
-        gpu,
-        instance,
-        transform
-    );
+    return draw_shape_key_mesh_internal(mesh, material, player.skinTexture, gpu, instance, NULL, transform);
+}
+
+bool R3D_DrawAnimatedShapeKeyMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox bounds, Matrix transform)
+{
+    if (player.skinTexture == 0) return false;
+
+    return draw_shape_key_mesh_internal(mesh, material, player.skinTexture, gpu, instance, &bounds, transform);
 }
 
 void R3D_DrawMeshInstanced(R3D_Mesh mesh, R3D_Material material, R3D_InstanceBuffer instances, int count)
@@ -529,12 +551,23 @@ void R3D_DrawAnimatedMeshEx(R3D_Mesh mesh, R3D_Material material, R3D_AnimationP
 
 void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, Matrix transform)
 {
+    R3D_DrawAnimatedMeshProBounds(mesh, material, player, mesh.aabb, transform);
+}
+
+void R3D_DrawAnimatedMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_AnimationPlayer player, BoundingBox bounds, Matrix transform)
+{
     if (!IS_MESH_VALID(mesh)) return;
     if (player.skinTexture == 0) return;
 
+    if (!is_valid_animated_bounds(bounds))
+    {
+        TraceLog(LOG_WARNING, "R3D: Invalid animated mesh bounds");
+        return;
+    }
+
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;
-    drawGroup.obb = R3D_GetOrientedBox(mesh.aabb, transform);
+    drawGroup.obb = R3D_GetOrientedBox(bounds, transform);
     drawGroup.skinTexture = player.skinTexture;
 
     r3d_render_group_push(&drawGroup);
@@ -543,6 +576,7 @@ void R3D_DrawAnimatedMeshPro(R3D_Mesh mesh, R3D_Material material, R3D_Animation
     drawCall.type = R3D_RENDER_CALL_MESH;
     drawCall.mesh.material = material;
     drawCall.mesh.instance = mesh;
+    drawCall.mesh.instance.aabb = bounds;
 
     r3d_render_call_push(&drawCall);
 }
@@ -633,9 +667,22 @@ void R3D_DrawAnimatedModelEx(R3D_Model model, R3D_AnimationPlayer player, Vector
 
 void R3D_DrawAnimatedModelPro(R3D_Model model, R3D_AnimationPlayer player, Matrix transform)
 {
+    R3D_DrawAnimatedModelProBounds(model, player, model.aabb, transform);
+}
+
+void R3D_DrawAnimatedModelProBounds(R3D_Model model, R3D_AnimationPlayer player, BoundingBox bounds, Matrix transform)
+{
+    if (!model.meshes || !model.materials || !model.meshMaterials || model.meshCount <= 0) return;
+
+    if (!is_valid_animated_bounds(bounds))
+    {
+        TraceLog(LOG_WARNING, "R3D: Invalid animated model bounds");
+        return;
+    }
+
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;
-    drawGroup.obb = R3D_GetOrientedBox(model.aabb, transform);
+    drawGroup.obb = R3D_GetOrientedBox(bounds, transform);
 
     drawGroup.skinTexture = (player.skinTexture > 0)
         ? player.skinTexture : model.skeleton.skinTexture;
@@ -651,6 +698,11 @@ void R3D_DrawAnimatedModelPro(R3D_Model model, R3D_AnimationPlayer player, Matri
         drawCall.type = R3D_RENDER_CALL_MESH;
         drawCall.mesh.material = model.materials[model.meshMaterials[i]];
         drawCall.mesh.instance = *mesh;
+
+        // Keep individual render calls conservative too.
+        // This also prevents incorrect per-call culling
+        // if the group has no valid skin texture.
+        drawCall.mesh.instance.aabb = bounds;
 
         r3d_render_call_push(&drawCall);
     }
