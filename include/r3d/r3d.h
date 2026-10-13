@@ -26,6 +26,7 @@
 #include "r3d_animation_tree.h"
 #include "r3d_animation_lookat.h"
 #include "r3d_animation_ik.h"
+#include "r3d_animation_spring.h"
 #include "r3d_camera.h"
 #include "r3d_core.h"
 #include "r3d_cubemap.h"
