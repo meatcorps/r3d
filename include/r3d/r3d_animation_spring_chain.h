@@ -121,6 +121,23 @@ R3DAPI bool R3D_UpdateSpringChain(
     float deltaTime
 );
 
+/**
+ * @brief Evaluates a spring chain with gravity, drag,
+ * and optional world-space inertia.
+ *
+ * All bones share the character's model-to-world transform,
+ * but retain independent spring force settings.
+ *
+ * The hierarchy is recomputed after each spring bone.
+ * Animation sampling and GPU upload remain external.
+ */
+R3DAPI bool R3D_UpdateSpringChainWorld(
+    R3D_SpringChain* chain,
+    R3D_AnimationPlayer* player,
+    Matrix modelToWorld,
+    float deltaTime
+);
+
 #ifdef __cplusplus
 }
 #endif

@@ -24,7 +24,18 @@ static bool valid_params(R3D_SpringBoneParams params)
         !isfinite(params.length) ||
         !isfinite(params.frequencyHz) ||
         !isfinite(params.dampingRatio) ||
-        !isfinite(params.weight))
+        !isfinite(params.weight) ||
+        !finite_vec3(params.forces.gravityWorld) ||
+        !isfinite(params.forces.drag) ||
+        !isfinite(params.forces.worldInertia))
+    {
+        return false;
+    }
+
+    if (params.forces.drag < 0.0f ||
+        params.forces.drag > 1000.0f ||
+        params.forces.worldInertia < 0.0f ||
+        params.forces.worldInertia > 1.0f)
     {
         return false;
     }
@@ -85,12 +96,33 @@ static bool valid_params(R3D_SpringBoneParams params)
            referenceLengthSq > 1e-12f;
 }
 
+static bool valid_affine(Matrix matrix)
+{
+    float16 values = MatrixToFloatV(matrix);
+
+    for (int i = 0; i < 16; i++)
+    {
+        if (!isfinite(values.v[i])) return false;
+    }
+
+    return fabsf(matrix.m3) <= 1e-5f &&
+           fabsf(matrix.m7) <= 1e-5f &&
+           fabsf(matrix.m11) <= 1e-5f &&
+           fabsf(matrix.m15 - 1.0f) <= 1e-5f;
+}
+
 static bool valid_state(const R3D_SpringBoneState* state)
 {
     if (!state->initialized) return true;
 
-    return finite_vec3(state->tipModel) &&
-           finite_vec3(state->velocityModel);
+    if (!finite_vec3(state->tipModel) ||
+        !finite_vec3(state->velocityModel))
+    {
+        return false;
+    }
+
+    return !state->worldInitialized ||
+           valid_affine(state->previousWorld);
 }
 
 static int find_descriptor(
@@ -281,6 +313,20 @@ bool R3D_UpdateSpringChain(
     R3D_AnimationPlayer* player,
     float deltaTime)
 {
+    return R3D_UpdateSpringChainWorld(
+        chain,
+        player,
+        MatrixIdentity(),
+        deltaTime
+    );
+}
+
+bool R3D_UpdateSpringChainWorld(
+    R3D_SpringChain* chain,
+    R3D_AnimationPlayer* player,
+    Matrix modelToWorld,
+    float deltaTime)
+{
     if (!R3D_IsSpringChainValid(chain) ||
         !player ||
         !player->localPose ||
@@ -288,6 +334,19 @@ bool R3D_UpdateSpringChain(
         !isfinite(deltaTime) ||
         deltaTime < 0.0f ||
         deltaTime > 1.0f)
+    {
+        return false;
+    }
+
+    if (!valid_affine(modelToWorld))
+    {
+        return false;
+    }
+
+    const float worldDeterminant = MatrixDeterminant(modelToWorld);
+
+    if (!isfinite(worldDeterminant) ||
+        fabsf(worldDeterminant) <= 1e-8f)
     {
         return false;
     }
@@ -340,11 +399,12 @@ bool R3D_UpdateSpringChain(
     {
         R3D_SpringChainBone* bone = &chain->bones[i];
 
-        if (!R3D_ApplyAnimationSpringBone(
+        if (!R3D_ApplyAnimationSpringBoneWorld(
             player,
             bone->boneIndex,
             &bone->state,
             bone->params,
+            modelToWorld,
             deltaTime))
         {
             return false;

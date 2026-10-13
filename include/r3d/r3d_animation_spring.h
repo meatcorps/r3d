@@ -27,8 +27,12 @@ typedef struct R3D_SpringBoneState {
     Vector3 tipModel;
     Vector3 velocityModel;
     bool initialized;
-} R3D_SpringBoneState;
 
+    // Previous character model-to-world transform.
+    // Used to preserve world-space tip motion between frames.
+    Matrix previousWorld;
+    bool worldInitialized;
+} R3D_SpringBoneState;
 
 /**
  * @brief Optional two-axis angular limits.
@@ -62,6 +66,17 @@ typedef struct R3D_SpringBoneAngleLimits {
     float maxVerticalRadians;
 } R3D_SpringBoneAngleLimits;
 
+/**
+ * @brief Optional secondary motion forces.
+ *
+ * All fields default to zero when omitted.
+ */
+typedef struct R3D_SpringBoneForces {
+    Vector3 gravityWorld;  ///< World-space acceleration, units/s^2.
+    float drag;            ///< Additional viscous damping, 1/s.
+    float worldInertia;    ///< 0 = model-relative, 1 = full world inertia.
+} R3D_SpringBoneForces;
+
 typedef struct R3D_SpringBoneParams {
     Vector3 localAxis;
     float length;
@@ -70,6 +85,7 @@ typedef struct R3D_SpringBoneParams {
     float weight;
 
     R3D_SpringBoneAngleLimits limits;
+    R3D_SpringBoneForces forces;
 } R3D_SpringBoneParams;
 
 /**
@@ -80,38 +96,37 @@ typedef struct R3D_SpringBoneParams {
  */
 R3DAPI void R3D_ResetAnimationSpringBone(R3D_SpringBoneState *state);
 
-/**
- * @brief Simulates one spring bone and applies its rotation to localPose.
- *
- * The current modelPose must represent the newly evaluated authored
- * animation, including any earlier procedural stages.
- *
- * The first update initializes the virtual tip to the authored pose.
- * Subsequent calls maintain simulation state between frames.
- *
- * The solver changes only the selected bone's local matrix.
- * It preserves the bone origin and rotates its existing basis,
- * retaining scale and shear.
- *
- * No hierarchy recomputation or GPU upload occurs here.
- *
- * After a successful call, recompute the affected subtree.
- * For chains, evaluate from parent to child, recomputing after
- * each spring bone.
- *
- * At weight zero, simulation continues but the pose is unchanged.
- * Delta time must be finite and within [0, 1] seconds.
- *
- * The spring operates in character/model space. Scene-level world
- * translation and rotation are not included in its simulation.
- *
- * @return True on success; false on invalid input without mutation.
- */
 R3DAPI bool R3D_ApplyAnimationSpringBone(
     R3D_AnimationPlayer *player,
     int boneIndex,
     R3D_SpringBoneState *state,
     R3D_SpringBoneParams params,
+    float deltaTime
+);
+
+/**
+ * @brief Applies a spring using the character's world transform.
+ *
+ * modelToWorld is the transform used to place the complete
+ * animated character in the scene, not an individual bone matrix.
+ *
+ * Uses previous-frame world-transform history for inertia.
+ * Gravity is supplied in world units per second squared.
+ *
+ * Use R3D_ResetAnimationSpringBone() after teleports.
+ *
+ * For physically meaningful force magnitudes, prefer rigid
+ * transforms or uniform scale. Nonuniform scaling changes
+ * the effective model-space acceleration.
+ *
+ * Does not recompute modelPose or upload the skinning pose.
+ */
+R3DAPI bool R3D_ApplyAnimationSpringBoneWorld(
+    R3D_AnimationPlayer *player,
+    int boneIndex,
+    R3D_SpringBoneState *state,
+    R3D_SpringBoneParams params,
+    Matrix modelToWorld,
     float deltaTime
 );
 

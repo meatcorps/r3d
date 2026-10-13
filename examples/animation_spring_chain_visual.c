@@ -19,13 +19,11 @@ static const int path[SEGMENT_COUNT] = {
     8, 3, 9, 4, 6, 2, 7, 5
 };
 
-static Vector3 position(Matrix matrix)
-{
+static Vector3 position(Matrix matrix) {
     return (Vector3){matrix.m12, matrix.m13, matrix.m14};
 }
 
-static R3D_Material colored_material(Color color)
-{
+static R3D_Material colored_material(Color color) {
     R3D_Material material = R3D_GetDefaultMaterial();
     material.albedo.color = color;
     return material;
@@ -36,8 +34,7 @@ static void draw_segment(
     R3D_Material material,
     Vector3 from,
     Vector3 to,
-    float thickness)
-{
+    float thickness) {
     Vector3 delta = Vector3Subtract(to, from);
     float length = Vector3Length(delta);
 
@@ -52,8 +49,7 @@ static void draw_segment(
         z, Vector3Scale(y, Vector3DotProduct(z, y))
     );
 
-    if (Vector3LengthSqr(z) < 1e-8f)
-    {
+    if (Vector3LengthSqr(z) < 1e-8f) {
         z = (Vector3){1, 0, 0};
 
         z = Vector3Subtract(
@@ -85,17 +81,15 @@ static void draw_tail(
     R3D_Mesh sphere,
     R3D_Material firstMaterial,
     R3D_Material secondMaterial,
-    const Vector3* joints,
-    float thickness)
-{
-    for (int i = 0; i < SEGMENT_COUNT; i++)
-    {
+    const Vector3 *joints,
+    float thickness) {
+    for (int i = 0; i < SEGMENT_COUNT; i++) {
         R3D_Material material =
-            i % 2 == 0 ? firstMaterial : secondMaterial;
+                i % 2 == 0 ? firstMaterial : secondMaterial;
 
         float taper = 1.0f - 0.65f * (
-            (float)i / (float)SEGMENT_COUNT
-        );
+                          (float) i / (float) SEGMENT_COUNT
+                      );
 
         draw_segment(
             cube,
@@ -121,8 +115,7 @@ static void draw_tail(
     );
 }
 
-int main(void)
-{
+int main(void) {
     InitWindow(1152, 648, "[r3d] - Spring Chain Visual");
     SetTargetFPS(60);
 
@@ -177,8 +170,7 @@ int main(void)
     Matrix localPose[BONE_COUNT] = {0};
     Matrix modelPose[BONE_COUNT] = {0};
 
-    for (int i = 0; i < BONE_COUNT; i++)
-    {
+    for (int i = 0; i < BONE_COUNT; i++) {
         localBind[i] = MatrixIdentity();
         modelBind[i] = MatrixIdentity();
     }
@@ -191,8 +183,7 @@ int main(void)
 
     float height = 0.65f;
 
-    for (int i = 0; i < SEGMENT_COUNT; i++)
-    {
+    for (int i = 0; i < SEGMENT_COUNT; i++) {
         const int boneIndex = path[i];
         const int parentIndex = i == 0 ? ROOT : path[i - 1];
 
@@ -228,19 +219,19 @@ int main(void)
     };
 
     const Vector3 translations[] = {
-        { 0.00f, 0.65f, 0},
-        { 0.65f, 0.65f, 0},
-        { 0.00f, 0.65f, 0},
+        {0.00f, 0.65f, 0},
+        {0.65f, 0.65f, 0},
+        {0.00f, 0.65f, 0},
         {-0.65f, 0.65f, 0},
-        { 0.00f, 0.65f, 0}
+        {0.00f, 0.65f, 0}
     };
 
     Quaternion rotations[5] = {
-        QuaternionFromAxisAngle((Vector3){0, 0, 1},  0.00f),
+        QuaternionFromAxisAngle((Vector3){0, 0, 1}, 0.00f),
         QuaternionFromAxisAngle((Vector3){0, 0, 1}, -0.40f),
-        QuaternionFromAxisAngle((Vector3){0, 0, 1},  0.00f),
-        QuaternionFromAxisAngle((Vector3){0, 0, 1},  0.40f),
-        QuaternionFromAxisAngle((Vector3){0, 0, 1},  0.00f)
+        QuaternionFromAxisAngle((Vector3){0, 0, 1}, 0.00f),
+        QuaternionFromAxisAngle((Vector3){0, 0, 1}, 0.40f),
+        QuaternionFromAxisAngle((Vector3){0, 0, 1}, 0.00f)
     };
 
     R3D_AnimationChannel channel = {
@@ -296,12 +287,11 @@ int main(void)
         }
     };
 
-    R3D_AnimationTreeNode* node = R3D_CreateAnimationNode(
+    R3D_AnimationTreeNode *node = R3D_CreateAnimationNode(
         &tree, nodeParams
     );
 
-    if (!node)
-    {
+    if (!node) {
         TraceLog(LOG_ERROR, "Failed to create animation node");
         R3D_UnloadAnimationTree(tree);
         R3D_UnloadMesh(cube);
@@ -321,17 +311,16 @@ int main(void)
     R3D_SpringChainBoneDesc descriptors[SEGMENT_COUNT];
 
     // Deliberately submit the descriptors in reverse order.
-    for (int i = 0; i < SEGMENT_COUNT; i++)
-    {
+    for (int i = 0; i < SEGMENT_COUNT; i++) {
         const int segment = SEGMENT_COUNT - 1 - i;
 
-        float t = (float)segment / (float)(SEGMENT_COUNT - 1);
+        float t = (float) segment / (float) (SEGMENT_COUNT - 1);
 
         float horizontalLimit =
-            (18.0f + 25.0f * t) * DEG2RAD;
+                (18.0f + 25.0f * t) * DEG2RAD;
 
         float verticalLimit =
-            (10.0f + 20.0f * t) * DEG2RAD;
+                (10.0f + 20.0f * t) * DEG2RAD;
 
         descriptors[i] = (R3D_SpringChainBoneDesc){
             .boneIndex = path[segment],
@@ -364,8 +353,7 @@ int main(void)
         SEGMENT_COUNT
     );
 
-    if (!R3D_IsSpringChainValid(&chain))
-    {
+    if (!R3D_IsSpringChainValid(&chain)) {
         TraceLog(LOG_ERROR, "Failed to create spring chain");
 
         R3D_UnloadAnimationTree(tree);
@@ -383,12 +371,18 @@ int main(void)
 
     float frequencyScale = 1.0f;
     float dampingAdjust = 0.0f;
+    float drag = 1.5f;
 
     bool animationPaused = false;
     bool springEnabled = true;
     bool limitsEnabled = true;
     bool showAuthored = false;
 
+    bool gravityEnabled = true;
+    bool inertiaEnabled = true;
+    bool worldMotionEnabled = true;
+
+    float worldTime = 0.0f;
     float teleportOffset = 0.0f;
     float cameraAngle = 0.4f;
 
@@ -400,15 +394,13 @@ int main(void)
         .projection = CAMERA_PERSPECTIVE
     };
 
-    while (!WindowShouldClose())
-    {
+    while (!WindowShouldClose()) {
         float dt = Clamp(GetFrameTime(), 0.0f, 1.0f / 30.0f);
 
         if (IsKeyPressed(KEY_P))
             animationPaused = !animationPaused;
 
-        if (IsKeyPressed(KEY_SPACE))
-        {
+        if (IsKeyPressed(KEY_SPACE)) {
             springEnabled = !springEnabled;
             R3D_ResetSpringChain(&chain);
         }
@@ -416,16 +408,15 @@ int main(void)
         if (IsKeyPressed(KEY_H))
             showAuthored = !showAuthored;
 
-        if (IsKeyPressed(KEY_L))
-        {
+        if (IsKeyPressed(KEY_L)) {
             limitsEnabled = !limitsEnabled;
             R3D_ResetSpringChain(&chain);
         }
 
-        if (IsKeyPressed(KEY_T))
-        {
+        if (IsKeyPressed(KEY_T)) {
             teleportOffset = teleportOffset == 0.0f
-                ? 1.5f : 0.0f;
+                                 ? 1.5f
+                                 : 0.0f;
 
             R3D_ResetSpringChain(&chain);
         }
@@ -448,19 +439,42 @@ int main(void)
         if (IsKeyDown(KEY_C))
             cameraAngle += dt;
 
+        if (IsKeyPressed(KEY_G))
+            gravityEnabled = !gravityEnabled;
+
+        if (IsKeyPressed(KEY_I)) {
+            inertiaEnabled = !inertiaEnabled;
+            R3D_ResetSpringChain(&chain);
+        }
+
+        if (IsKeyPressed(KEY_W))
+            worldMotionEnabled = !worldMotionEnabled;
+
+        if (IsKeyDown(KEY_J))
+            drag -= dt * 3.0f;
+
+        if (IsKeyDown(KEY_K))
+            drag += dt * 3.0f;
+
+        drag = Clamp(drag, 0.0f, 20.0f);
         frequencyScale = Clamp(frequencyScale, 0.2f, 3.0f);
         dampingAdjust = Clamp(dampingAdjust, -0.35f, 0.2f);
 
-        if (IsKeyPressed(KEY_R))
-        {
+        if (IsKeyPressed(KEY_R)) {
             frequencyScale = 1.0f;
             dampingAdjust = 0.0f;
+            drag = 1.5f;
             teleportOffset = 0.0f;
+            worldTime = 0.0f;
 
             animationPaused = false;
             springEnabled = true;
             limitsEnabled = true;
             showAuthored = false;
+
+            gravityEnabled = true;
+            inertiaEnabled = true;
+            worldMotionEnabled = true;
 
             R3D_ResetSpringChain(&chain);
         }
@@ -472,18 +486,36 @@ int main(void)
         };
 
         // ========================================
+        // CHARACTER WORLD TRANSFORM
+        // ========================================
+
+        if (worldMotionEnabled) {
+            worldTime += dt;
+        }
+
+        // Base tilt makes world gravity easier to observe.
+        // Oscillating rotation + translation tests inertia.
+        float worldAngle =
+                0.60f + sinf(worldTime * 1.8f) * 0.32f;
+
+        Matrix characterWorld = MatrixRotateZ(worldAngle);
+
+        characterWorld.m12 = sinf(worldTime * 2.1f) * 0.75f;
+        characterWorld.m13 = 0.0f;
+        characterWorld.m14 = 0.0f;
+
+        // ========================================
         // STAGE 1: ANIMATION TREE
         // ========================================
 
         bool poseValid =
-            R3D_AdvanceAnimationTree(
-                &tree,
-                animationPaused ? 0.0f : dt
-            ) &&
-            R3D_ComputeAnimationTreeLocalPose(&tree);
+                R3D_AdvanceAnimationTree(
+                    &tree,
+                    animationPaused ? 0.0f : dt
+                ) &&
+                R3D_ComputeAnimationTreeLocalPose(&tree);
 
-        if (poseValid)
-        {
+        if (poseValid) {
             localPose[ROOT].m12 += teleportOffset;
 
             poseValid = R3D_ComputeAnimationTreeModelPose(&tree);
@@ -492,15 +524,18 @@ int main(void)
         Vector3 authoredJoints[SEGMENT_COUNT + 1] = {0};
         Vector3 finalJoints[SEGMENT_COUNT + 1] = {0};
 
-        if (poseValid)
-        {
-            for (int i = 0; i < SEGMENT_COUNT; i++)
-            {
-                authoredJoints[i] = position(modelPose[path[i]]);
+        if (poseValid) {
+            for (int i = 0; i < SEGMENT_COUNT; i++) {
+                authoredJoints[i] = Vector3Transform(
+                    position(modelPose[path[i]]),
+                    characterWorld
+                );
             }
 
-            authoredJoints[SEGMENT_COUNT] =
-                position(modelPose[TIP]);
+            authoredJoints[SEGMENT_COUNT] = Vector3Transform(
+                position(modelPose[TIP]),
+                characterWorld
+            );
         }
 
         // ========================================
@@ -509,12 +544,11 @@ int main(void)
 
         // The sorted chain corresponds to path[0..7].
         // Each segment has independent parameters.
-        for (int i = 0; i < chain.boneCount; i++)
-        {
-            float t = (float)i / (float)(SEGMENT_COUNT - 1);
+        for (int i = 0; i < chain.boneCount; i++) {
+            float t = (float) i / (float) (SEGMENT_COUNT - 1);
 
             chain.bones[i].params.frequencyHz =
-                (5.0f - 3.2f * t) * frequencyScale;
+                    (5.0f - 3.2f * t) * frequencyScale;
 
             chain.bones[i].params.dampingRatio = Clamp(
                 0.80f - 0.45f * t + dampingAdjust,
@@ -522,30 +556,43 @@ int main(void)
                 1.0f
             );
 
-            chain.bones[i].params.limits.enabled =
-                limitsEnabled;
+            chain.bones[i].params.limits.enabled = limitsEnabled;
+
+            // Independent forces per bone.
+            chain.bones[i].params.forces.gravityWorld =
+                    gravityEnabled
+                        ? (Vector3){0, -9.81f, 0}
+                        : Vector3Zero();
+
+            chain.bones[i].params.forces.drag = drag;
+
+            chain.bones[i].params.forces.worldInertia =
+                    inertiaEnabled ? 1.0f : 0.0f;
         }
 
         bool springSuccess = true;
 
-        if (poseValid && springEnabled)
-        {
-            springSuccess = R3D_UpdateSpringChain(
+        if (poseValid && springEnabled) {
+            springSuccess = R3D_UpdateSpringChainWorld(
                 &chain,
                 &tree.player,
+                characterWorld,
                 dt
             );
         }
 
-        if (poseValid)
-        {
-            for (int i = 0; i < SEGMENT_COUNT; i++)
-            {
-                finalJoints[i] = position(modelPose[path[i]]);
+        if (poseValid) {
+            for (int i = 0; i < SEGMENT_COUNT; i++) {
+                finalJoints[i] = Vector3Transform(
+                    position(modelPose[path[i]]),
+                    characterWorld
+                );
             }
 
-            finalJoints[SEGMENT_COUNT] =
-                position(modelPose[TIP]);
+            finalJoints[SEGMENT_COUNT] = Vector3Transform(
+                position(modelPose[TIP]),
+                characterWorld
+            );
         }
 
         // ========================================
@@ -553,96 +600,117 @@ int main(void)
         // ========================================
 
         BeginDrawing();
-            ClearBackground(BLACK);
+        ClearBackground(BLACK);
 
-            R3D_Begin(camera);
-                R3D_PushLight(light);
+        R3D_Begin(camera);
+        R3D_PushLight(light);
 
-                R3D_DrawMesh(
-                    ground,
-                    floorMaterial,
-                    (Vector3){0, -0.05f, 0},
-                    1.0f
-                );
+        R3D_DrawMesh(
+            ground,
+            floorMaterial,
+            (Vector3){0, -0.05f, 0},
+            1.0f
+        );
 
-                if (poseValid)
-                {
-                    draw_segment(
-                        cube,
-                        base,
-                        position(modelPose[ROOT]),
-                        finalJoints[0],
-                        0.35f
-                    );
-
-                    if (showAuthored)
-                    {
-                        draw_tail(
-                            cube, sphere,
-                            authored, authored,
-                            authoredJoints,
-                            0.06f
-                        );
-                    }
-
-                    draw_tail(
-                        cube, sphere,
-                        blue, green,
-                        finalJoints,
-                        0.18f
-                    );
-                }
-            R3D_End();
-
-            DrawRectangle(8, 8, 650, 188, Fade(BLACK, 0.75f));
-
-            DrawText(
-                "SPRING CHAIN / 8 SEGMENTS",
-                18, 16, 22, RAYWHITE
-            );
-
-            DrawText(
-                TextFormat(
-                    "Chain: %s  |  Animation: %s  |  Limits: %s",
-                    springEnabled ? "ON" : "OFF",
-                    animationPaused ? "PAUSED" : "PLAYING",
-                    limitsEnabled ? "ON" : "OFF"
+        if (poseValid) {
+            draw_segment(
+                cube,
+                base,
+                Vector3Transform(
+                    position(modelPose[ROOT]),
+                    characterWorld
                 ),
-                18, 48, 16, LIGHTGRAY
+                finalJoints[0],
+                0.35f
             );
 
-            DrawText(
-                TextFormat(
-                    "Frequency scale: %.2f  |  Damping adjust: %.2f",
-                    frequencyScale, dampingAdjust
-                ),
-                18, 74, 16, LIGHTGRAY
-            );
-
-            DrawText(
-                "UP/DOWN Frequency    LEFT/RIGHT Damping",
-                18, 99, 16, LIGHTGRAY
-            );
-
-            DrawText(
-                "SPACE Chain    P Pause    L Limits    H Authored",
-                18, 123, 16, LIGHTGRAY
-            );
-
-            DrawText(
-                "T Teleport/reset    Z/C Camera    R Reset",
-                18, 147, 16, LIGHTGRAY
-            );
-
-            if (!poseValid || !springSuccess)
-            {
-                DrawText(
-                    "SPRING CHAIN ERROR",
-                    18, 169, 16, RED
+            if (showAuthored) {
+                draw_tail(
+                    cube, sphere,
+                    authored, authored,
+                    authoredJoints,
+                    0.06f
                 );
             }
 
-            DrawFPS(GetScreenWidth() - 100, 12);
+            draw_tail(
+                cube, sphere,
+                blue, green,
+                finalJoints,
+                0.18f
+            );
+        }
+        R3D_End();
+
+        DrawRectangle(8, 8, 680, 260, Fade(BLACK, 0.75f));
+
+        DrawText(
+            "SPRING CHAIN / 8 SEGMENTS",
+            18, 16, 22, RAYWHITE
+        );
+
+        DrawText(
+            TextFormat(
+                "Chain: %s  |  Animation: %s  |  Limits: %s",
+                springEnabled ? "ON" : "OFF",
+                animationPaused ? "PAUSED" : "PLAYING",
+                limitsEnabled ? "ON" : "OFF"
+            ),
+            18, 48, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            TextFormat(
+                "Frequency scale: %.2f  |  Damping adjust: %.2f",
+                frequencyScale, dampingAdjust
+            ),
+            18, 74, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            "UP/DOWN Frequency    LEFT/RIGHT Damping",
+            18, 99, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            "SPACE Chain    P Pause    L Limits    H Authored",
+            18, 123, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            "T Teleport/reset    Z/C Camera    R Reset",
+            18, 147, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            TextFormat(
+                "Gravity: %s | Inertia: %s | World motion: %s | Drag: %.2f",
+                gravityEnabled ? "ON" : "OFF",
+                inertiaEnabled ? "ON" : "OFF",
+                worldMotionEnabled ? "ON" : "OFF",
+                drag
+            ),
+            18, 169, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            "G Gravity    I Inertia    W World motion    J/K Drag",
+            18, 193, 16, LIGHTGRAY
+        );
+
+        DrawText(
+            "Compare: toggle I during motion, G while paused",
+            18, 217, 16, LIGHTGRAY
+        );
+
+        if (!poseValid || !springSuccess) {
+            DrawText(
+                "SPRING CHAIN ERROR",
+                18, 241, 16, RED
+            );
+        }
+
+        DrawFPS(GetScreenWidth() - 100, 12);
         EndDrawing();
     }
 

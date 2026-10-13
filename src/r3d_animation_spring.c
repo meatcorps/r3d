@@ -322,12 +322,12 @@ static bool apply_spring_angle_limits(
 }
 
 /**
- * Integrates a damped harmonic spring toward a fixed target.
+ * Analytical spring integration with constant external acceleration.
  *
- * This uses the analytical solution of a second-order spring,
- * with the target treated as constant over the current frame.
+ * x'' + (2 * dampingRatio * omega + drag) * x'
+ *     + omega^2 * (x - target) = acceleration
  *
- * The result is independent of Euler integration step size.
+ * Supports underdamped, critical, and overdamped motion.
  */
 static void integrate_spring(
     Vector3 current,
@@ -335,77 +335,141 @@ static void integrate_spring(
     Vector3 target,
     float frequencyHz,
     float dampingRatio,
+    float drag,
+    Vector3 acceleration,
     float dt,
     Vector3* outPosition,
     Vector3* outVelocity)
 {
     const float omega = 2.0f * PI * frequencyHz;
-    const float alpha = dampingRatio * omega;
+    const float omegaSq = omega * omega;
 
-    // Displacement relative to the moving target.
-    Vector3 x = Vector3Subtract(current, target);
+    // Drag is additional velocity-proportional resistance.
+    const float alpha = dampingRatio * omega + 0.5f * drag;
+
+    // Constant acceleration shifts the spring equilibrium.
+    const Vector3 equilibrium = Vector3Add(
+        target,
+        Vector3Scale(acceleration, 1.0f / omegaSq)
+    );
+
+    const Vector3 x = Vector3Subtract(current, equilibrium);
 
     Vector3 nextX;
     Vector3 nextVelocity;
 
-    if (dampingRatio >= 0.999f)
+    if (alpha < omega * 0.999f)
     {
-        // Critically damped spring.
-        float decay = expf(-omega * dt);
+        // ========================================
+        // UNDERDAMPED
+        // ========================================
 
-        Vector3 initialSlope = Vector3Add(
+        const float omegaD = sqrtf(
+            fmaxf(0.0f, omegaSq - alpha * alpha)
+        );
+
+        const float decay = expf(-alpha * dt);
+        const float cosine = cosf(omegaD * dt);
+        const float sineOverOmegaD = sinf(omegaD * dt) / omegaD;
+
+        nextX = Vector3Add(
+            Vector3Scale(
+                x,
+                decay * (cosine + alpha * sineOverOmegaD)
+            ),
+            Vector3Scale(
+                velocity,
+                decay * sineOverOmegaD
+            )
+        );
+
+        nextVelocity = Vector3Add(
+            Vector3Scale(
+                x,
+                -decay * omegaSq * sineOverOmegaD
+            ),
+            Vector3Scale(
+                velocity,
+                decay * (cosine - alpha * sineOverOmegaD)
+            )
+        );
+    }
+    else if (alpha <= omega * 1.001f)
+    {
+        // ========================================
+        // CRITICALLY DAMPED
+        // ========================================
+
+        const float decay = expf(-omega * dt);
+
+        const Vector3 slope = Vector3Add(
             velocity,
             Vector3Scale(x, omega)
         );
 
         nextX = Vector3Scale(
-            Vector3Add(x, Vector3Scale(initialSlope, dt)),
+            Vector3Add(x, Vector3Scale(slope, dt)),
             decay
         );
 
         nextVelocity = Vector3Scale(
             Vector3Subtract(
                 velocity,
-                Vector3Scale(initialSlope, omega * dt)
+                Vector3Scale(slope, omega * dt)
             ),
             decay
         );
     }
     else
     {
-        // Underdamped spring.
-        float omegaD = omega * sqrtf(
-            1.0f - dampingRatio * dampingRatio
+        // ========================================
+        // OVERDAMPED
+        // ========================================
+
+        const float beta = sqrtf(
+            alpha * alpha - omegaSq
         );
 
-        float decay = expf(-alpha * dt);
-        float cosine = cosf(omegaD * dt);
-        float sineOverOmegaD = sinf(omegaD * dt) / omegaD;
+        const float slowRoot = -alpha + beta;
+        const float fastRoot = -alpha - beta;
 
-        float positionFromPosition =
-            decay * (cosine + alpha * sineOverOmegaD);
+        const float inverseDifference =
+            1.0f / (slowRoot - fastRoot);
 
-        float positionFromVelocity =
-            decay * sineOverOmegaD;
+        const Vector3 slowCoefficient = Vector3Scale(
+            Vector3Subtract(
+                velocity,
+                Vector3Scale(x, fastRoot)
+            ),
+            inverseDifference
+        );
 
-        float velocityFromPosition =
-            -decay * omega * omega * sineOverOmegaD;
+        const Vector3 fastCoefficient = Vector3Subtract(
+            x,
+            slowCoefficient
+        );
 
-        float velocityFromVelocity =
-            decay * (cosine - alpha * sineOverOmegaD);
+        const float slowDecay = expf(slowRoot * dt);
+        const float fastDecay = expf(fastRoot * dt);
 
         nextX = Vector3Add(
-            Vector3Scale(x, positionFromPosition),
-            Vector3Scale(velocity, positionFromVelocity)
+            Vector3Scale(slowCoefficient, slowDecay),
+            Vector3Scale(fastCoefficient, fastDecay)
         );
 
         nextVelocity = Vector3Add(
-            Vector3Scale(x, velocityFromPosition),
-            Vector3Scale(velocity, velocityFromVelocity)
+            Vector3Scale(
+                slowCoefficient,
+                slowRoot * slowDecay
+            ),
+            Vector3Scale(
+                fastCoefficient,
+                fastRoot * fastDecay
+            )
         );
     }
 
-    *outPosition = Vector3Add(target, nextX);
+    *outPosition = Vector3Add(equilibrium, nextX);
     *outVelocity = nextVelocity;
 }
 
@@ -416,6 +480,9 @@ void R3D_ResetAnimationSpringBone(R3D_SpringBoneState* state)
     state->tipModel = Vector3Zero();
     state->velocityModel = Vector3Zero();
     state->initialized = false;
+
+    state->previousWorld = MatrixIdentity();
+    state->worldInitialized = false;
 }
 
 bool R3D_ApplyAnimationSpringBone(
@@ -423,6 +490,24 @@ bool R3D_ApplyAnimationSpringBone(
     int boneIndex,
     R3D_SpringBoneState* state,
     R3D_SpringBoneParams params,
+    float deltaTime)
+{
+    return R3D_ApplyAnimationSpringBoneWorld(
+        player,
+        boneIndex,
+        state,
+        params,
+        MatrixIdentity(),
+        deltaTime
+    );
+}
+
+bool R3D_ApplyAnimationSpringBoneWorld(
+    R3D_AnimationPlayer* player,
+    int boneIndex,
+    R3D_SpringBoneState* state,
+    R3D_SpringBoneParams params,
+    Matrix modelToWorld,
     float deltaTime)
 {
     // ========================================
@@ -450,14 +535,45 @@ bool R3D_ApplyAnimationSpringBone(
     }
 
     if (params.length <= 0.0f ||
-        params.frequencyHz <= 0.0f ||
-        params.frequencyHz > 1000.0f ||
-        params.dampingRatio < 0.0f ||
-        params.dampingRatio > 1.0f ||
-        params.weight < 0.0f ||
-        params.weight > 1.0f ||
-        deltaTime < 0.0f ||
-        deltaTime > 1.0f)
+    params.frequencyHz <= 0.0f ||
+    params.frequencyHz > 1000.0f ||
+    params.dampingRatio < 0.0f ||
+    params.dampingRatio > 1.0f ||
+    params.weight < 0.0f ||
+    params.weight > 1.0f ||
+    deltaTime < 0.0f ||
+    deltaTime > 1.0f)
+    {
+        return false;
+    }
+
+    if (!finite_vec3(params.forces.gravityWorld) ||
+        !isfinite(params.forces.drag) ||
+        !isfinite(params.forces.worldInertia) ||
+        params.forces.drag < 0.0f ||
+        params.forces.drag > 1000.0f ||
+        params.forces.worldInertia < 0.0f ||
+        params.forces.worldInertia > 1.0f)
+    {
+        return false;
+    }
+
+    if (!finite_affine(modelToWorld))
+    {
+        return false;
+    }
+
+    const float worldDeterminant = MatrixDeterminant(modelToWorld);
+
+    if (!isfinite(worldDeterminant) ||
+        fabsf(worldDeterminant) <= 1e-8f)
+    {
+        return false;
+    }
+
+    const Matrix inverseWorld = MatrixInvert(modelToWorld);
+
+    if (!finite_affine(inverseWorld))
     {
         return false;
     }
@@ -515,8 +631,15 @@ bool R3D_ApplyAnimationSpringBone(
     }
 
     if (state->initialized &&
-        (!finite_vec3(state->tipModel) ||
-         !finite_vec3(state->velocityModel)))
+    (!finite_vec3(state->tipModel) ||
+     !finite_vec3(state->velocityModel)))
+    {
+        return false;
+    }
+
+    if (state->initialized &&
+        state->worldInitialized &&
+        !finite_affine(state->previousWorld))
     {
         return false;
     }
@@ -588,31 +711,104 @@ bool R3D_ApplyAnimationSpringBone(
     // INITIALIZATION
     // ========================================
 
-    if (!state->initialized)
+        if (!state->initialized)
     {
-        // The first evaluation establishes the rest position.
-        // No unexpected spring rotation on the first frame.
+        // Initialize directly from the authored pose.
         state->tipModel = targetTip;
         state->velocityModel = Vector3Zero();
         state->initialized = true;
+
+        state->previousWorld = modelToWorld;
+        state->worldInitialized = true;
+
         return true;
+    }
+
+    // ========================================
+    // WORLD-SPACE INERTIA
+    // ========================================
+
+    R3D_SpringBoneState next = *state;
+
+    if (state->worldInitialized &&
+        params.forces.worldInertia > 0.0f)
+    {
+        // Convert the previous simulated tip to world space.
+        const Vector3 previousTipWorld = Vector3Transform(
+            state->tipModel,
+            state->previousWorld
+        );
+
+        // Convert that unchanged world position into the
+        // current model space.
+        const Vector3 inertialTipModel = Vector3Transform(
+            previousTipWorld,
+            inverseWorld
+        );
+
+        // The velocity must change coordinate frames too.
+        const Vector3 previousVelocityWorld = transform_direction(
+            state->velocityModel,
+            state->previousWorld
+        );
+
+        const Vector3 inertialVelocityModel = transform_direction(
+            previousVelocityWorld,
+            inverseWorld
+        );
+
+        // 0 = ignore external world movement.
+        // 1 = retain the previous world-space position.
+        next.tipModel = Vector3Lerp(
+            state->tipModel,
+            inertialTipModel,
+            params.forces.worldInertia
+        );
+
+        next.velocityModel = Vector3Lerp(
+            state->velocityModel,
+            inertialVelocityModel,
+            params.forces.worldInertia
+        );
+    }
+
+    if (!finite_vec3(next.tipModel) ||
+        !finite_vec3(next.velocityModel))
+    {
+        return false;
+    }
+
+    // ========================================
+    // GRAVITY
+    // ========================================
+
+    // External gravity is expressed in world space.
+    // Convert its direction into current model space.
+    const Vector3 gravityModel = transform_direction(
+        params.forces.gravityWorld,
+        inverseWorld
+    );
+
+    if (!finite_vec3(gravityModel))
+    {
+        return false;
     }
 
     // ========================================
     // SIMULATE SPRING TIP
     // ========================================
 
-    R3D_SpringBoneState next = *state;
-
     Vector3 simulatedTip;
     Vector3 simulatedVelocity;
 
     integrate_spring(
-        state->tipModel,
-        state->velocityModel,
+        next.tipModel,
+        next.velocityModel,
         targetTip,
         params.frequencyHz,
         params.dampingRatio,
+        params.forces.drag,
+        gravityModel,
         deltaTime,
         &simulatedTip,
         &simulatedVelocity
@@ -672,10 +868,15 @@ bool R3D_ApplyAnimationSpringBone(
     );
 
     if (!finite_vec3(next.tipModel) ||
-        !finite_vec3(next.velocityModel))
+    !finite_vec3(next.velocityModel))
     {
         return false;
     }
+
+    // Save the transform corresponding to this simulation step.
+    // This is committed together with the updated state below.
+    next.previousWorld = modelToWorld;
+    next.worldInitialized = true;
 
     // ========================================
     // APPLY BONE ORIENTATION
