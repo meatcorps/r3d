@@ -15,6 +15,7 @@
 extern "C" {
 
 
+
 #endif
 
 /**
@@ -29,9 +30,14 @@ typedef struct R3D_SpringBoneState {
     bool initialized;
 
     // Previous character model-to-world transform.
-    // Used to preserve world-space tip motion between frames.
     Matrix previousWorld;
     bool worldInitialized;
+
+    // Previous authored bone position/direction in world space.
+    // Tracks both world-transform and skeletal discontinuities.
+    Vector3 previousOriginWorld;
+    Vector3 previousDirectionWorld;
+    bool trackingInitialized;
 } R3D_SpringBoneState;
 
 /**
@@ -64,6 +70,11 @@ typedef struct R3D_SpringBoneAngleLimits {
 
     float minVerticalRadians;
     float maxVerticalRadians;
+
+    // Optional braking region inside each angular limit.
+    // Zero preserves the existing hard-limit behavior.
+    // The effective region is capped to half the angle range.
+    float softZoneRadians;
 } R3D_SpringBoneAngleLimits;
 
 /**
@@ -72,10 +83,38 @@ typedef struct R3D_SpringBoneAngleLimits {
  * All fields default to zero when omitted.
  */
 typedef struct R3D_SpringBoneForces {
-    Vector3 gravityWorld;  ///< World-space acceleration, units/s^2.
-    float drag;            ///< Additional viscous damping, 1/s.
-    float worldInertia;    ///< 0 = model-relative, 1 = full world inertia.
+    Vector3 gravityWorld; ///< World-space acceleration, units/s^2.
+    float drag; ///< Additional viscous damping, 1/s.
+    float worldInertia; ///< 0 = model-relative, 1 = full world inertia.
 } R3D_SpringBoneForces;
+
+/**
+ * @brief Optional spring stability safeguards.
+ *
+ * All values default to zero (disabled).
+ *
+ * teleportDistance:
+ *   Maximum allowed change in authored bone-origin world position
+ *   between updates. Measured in world units.
+ *
+ * teleportAngleRadians:
+ *   Maximum angular change of the authored bone direction,
+ *   measured in world space. Range: [0, PI].
+ *
+ * maxTipOffset:
+ *   Maximum model-space deviation from the authored virtual tip
+ *   before/after spring integration. Zero disables clamping.
+ *
+ * maxTipSpeed:
+ *   Maximum model-space spring-tip velocity in units/second.
+ *   Zero disables clamping.
+ */
+typedef struct R3D_SpringBoneStability {
+    float teleportDistance;
+    float teleportAngleRadians;
+    float maxTipOffset;
+    float maxTipSpeed;
+} R3D_SpringBoneStability;
 
 typedef struct R3D_SpringBoneParams {
     Vector3 localAxis;
@@ -86,6 +125,7 @@ typedef struct R3D_SpringBoneParams {
 
     R3D_SpringBoneAngleLimits limits;
     R3D_SpringBoneForces forces;
+    R3D_SpringBoneStability stability;
 } R3D_SpringBoneParams;
 
 /**

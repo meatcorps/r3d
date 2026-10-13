@@ -50,6 +50,7 @@ add_example(r3d_animation_spring_chain "examples/animation_spring_chain.c")
 add_example(r3d_animation_spring_chain_visual "examples/animation_spring_chain_visual.c")
 add_example(r3d_animation_spring_forces "examples/animation_spring_forces.c")
 add_example(r3d_animation_spring_timestep "examples/animation_spring_timestep.c")
+add_example(r3d_animation_spring_stability "examples/animation_spring_stability.c")
 
 add_example(r3d_bloom "examples/bloom.c")
 add_example(r3d_resize "examples/resize.c")

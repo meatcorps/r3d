@@ -40,6 +40,22 @@ static bool valid_params(R3D_SpringBoneParams params)
         return false;
     }
 
+    const R3D_SpringBoneStability* stability =
+        &params.stability;
+
+    if (!isfinite(stability->teleportDistance) ||
+        !isfinite(stability->teleportAngleRadians) ||
+        !isfinite(stability->maxTipOffset) ||
+        !isfinite(stability->maxTipSpeed) ||
+        stability->teleportDistance < 0.0f ||
+        stability->teleportAngleRadians < 0.0f ||
+        stability->teleportAngleRadians > PI ||
+        stability->maxTipOffset < 0.0f ||
+        stability->maxTipSpeed < 0.0f)
+    {
+        return false;
+    }
+
     if (Vector3LengthSqr(params.localAxis) <= 1e-12f ||
         params.length <= 0.0f ||
         params.frequencyHz <= 0.0f ||
@@ -60,7 +76,10 @@ static bool valid_params(R3D_SpringBoneParams params)
         !isfinite(limits->minHorizontalRadians) ||
         !isfinite(limits->maxHorizontalRadians) ||
         !isfinite(limits->minVerticalRadians) ||
-        !isfinite(limits->maxVerticalRadians))
+        !isfinite(limits->maxVerticalRadians) ||
+        !isfinite(limits->softZoneRadians) ||
+        limits->softZoneRadians < 0.0f ||
+        limits->softZoneRadians > PI)
     {
         return false;
     }
@@ -121,8 +140,20 @@ static bool valid_state(const R3D_SpringBoneState* state)
         return false;
     }
 
-    return !state->worldInitialized ||
-           valid_affine(state->previousWorld);
+    if (state->worldInitialized &&
+        !valid_affine(state->previousWorld))
+    {
+        return false;
+    }
+
+    if (state->trackingInitialized &&
+        (!finite_vec3(state->previousOriginWorld) ||
+         !finite_vec3(state->previousDirectionWorld)))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 static int find_descriptor(

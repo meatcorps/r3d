@@ -381,6 +381,7 @@ int main(void) {
     bool gravityEnabled = true;
     bool inertiaEnabled = true;
     bool worldMotionEnabled = true;
+    bool softLimitsEnabled = true;
 
     float worldTime = 0.0f;
     float teleportOffset = 0.0f;
@@ -413,12 +414,13 @@ int main(void) {
             R3D_ResetSpringChain(&chain);
         }
 
-        if (IsKeyPressed(KEY_T)) {
+        if (IsKeyPressed(KEY_T))
+        {
+            // Deliberately DO NOT reset the chain.
+            // The new per-bone teleport detection must
+            // identify this authored-root discontinuity.
             teleportOffset = teleportOffset == 0.0f
-                                 ? 1.5f
-                                 : 0.0f;
-
-            R3D_ResetSpringChain(&chain);
+                ? 1.5f : 0.0f;
         }
 
         if (IsKeyDown(KEY_UP))
@@ -441,6 +443,9 @@ int main(void) {
 
         if (IsKeyPressed(KEY_G))
             gravityEnabled = !gravityEnabled;
+
+        if (IsKeyPressed(KEY_B))
+            softLimitsEnabled = !softLimitsEnabled;
 
         if (IsKeyPressed(KEY_I)) {
             inertiaEnabled = !inertiaEnabled;
@@ -566,8 +571,27 @@ int main(void) {
 
             chain.bones[i].params.forces.drag = drag;
 
-            chain.bones[i].params.forces.worldInertia =
-                    inertiaEnabled ? 1.0f : 0.0f;
+            chain.bones[i].params.forces.worldInertia = inertiaEnabled ? 1.0f : 0.0f;
+
+            // Soft braking inside the existing angular limits.
+            chain.bones[i].params.limits.softZoneRadians =
+                softLimitsEnabled
+                    ? 10.0f * DEG2RAD
+                    : 0.0f;
+
+            // Automatic teleport detection.
+            chain.bones[i].params.stability.teleportDistance =
+                1.2f;
+
+            chain.bones[i].params.stability.teleportAngleRadians =
+                90.0f * DEG2RAD;
+
+            // Extreme movement safeguards.
+            chain.bones[i].params.stability.maxTipOffset =
+                1.8f;
+
+            chain.bones[i].params.stability.maxTipSpeed =
+                8.0f;
         }
 
         bool springSuccess = true;
@@ -642,7 +666,7 @@ int main(void) {
         }
         R3D_End();
 
-        DrawRectangle(8, 8, 680, 260, Fade(BLACK, 0.75f));
+        DrawRectangle(8, 8, 680, 298, Fade(BLACK, 0.75f));
 
         DrawText(
             "SPRING CHAIN / 8 SEGMENTS",
@@ -699,14 +723,23 @@ int main(void) {
         );
 
         DrawText(
-            "Compare: toggle I during motion, G while paused",
+            TextFormat(
+                "B Soft limits: %s | T Automatic teleport recovery",
+                softLimitsEnabled ? "ON" : "OFF"
+            ),
             18, 217, 16, LIGHTGRAY
         );
 
-        if (!poseValid || !springSuccess) {
+        DrawText(
+            "Compare B on/off near limits; press T during motion",
+            18, 241, 16, LIGHTGRAY
+        );
+
+        if (!poseValid || !springSuccess)
+        {
             DrawText(
                 "SPRING CHAIN ERROR",
-                18, 241, 16, RED
+                18, 269, 16, RED
             );
         }
 

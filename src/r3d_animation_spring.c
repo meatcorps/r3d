@@ -45,6 +45,75 @@ static bool normalize_safe(Vector3* vector)
     return true;
 }
 
+/**
+ * Caps a vector magnitude without computing the square of
+ * potentially enormous input components.
+ */
+static bool cap_vector_length(Vector3* value, float maximum)
+{
+    if (!finite_vec3(*value)) return false;
+
+    if (maximum <= 0.0f) return true;
+
+    float largest = fmaxf(
+        fabsf(value->x),
+        fmaxf(fabsf(value->y), fabsf(value->z))
+    );
+
+    if (largest == 0.0f) return true;
+
+    Vector3 scaled = Vector3Scale(
+        *value, 1.0f / largest
+    );
+
+    float scaledLength = Vector3Length(scaled);
+
+    if (!isfinite(scaledLength) ||
+        scaledLength <= 0.0f)
+    {
+        return false;
+    }
+
+    // Compare before multiplying by largest, preventing
+    // unnecessary overflow for very large input vectors.
+    if (largest > maximum / scaledLength)
+    {
+        *value = Vector3Scale(
+            scaled,
+            maximum / scaledLength
+        );
+    }
+
+    return finite_vec3(*value);
+}
+
+/**
+ * Caps displacement from a reference position.
+ */
+static bool cap_tip_offset(
+    Vector3* tip,
+    Vector3 target,
+    float maximum)
+{
+    if (!finite_vec3(*tip) || !finite_vec3(target))
+    {
+        return false;
+    }
+
+    if (maximum <= 0.0f) return true;
+
+    Vector3 offset = Vector3Subtract(*tip, target);
+
+    if (!cap_vector_length(&offset, maximum))
+    {
+        return false;
+    }
+
+    *tip = Vector3Add(target, offset);
+
+    return finite_vec3(*tip);
+}
+
 static Vector3 matrix_position(Matrix matrix)
 {
     return (Vector3){
@@ -130,6 +199,70 @@ static bool rotation_between(
 
     *result = QuaternionFromAxisAngle(axis, acosf(dot));
     return true;
+}
+
+/**
+ * Gradually removes outward tangential velocity as an
+ * angular coordinate approaches its hard limit.
+ *
+ * No correction is applied outside the soft zone.
+ * The hard boundary is still enforced separately.
+ */
+static Vector3 brake_soft_angular_velocity(
+    Vector3 velocity,
+    Vector3 tangent,
+    float angle,
+    float minAngle,
+    float maxAngle,
+    float softZone)
+{
+    if (softZone <= 0.0f || minAngle >= maxAngle)
+    {
+        return velocity;
+    }
+
+    float zone = fminf(
+        softZone,
+        0.5f * (maxAngle - minAngle)
+    );
+
+    if (zone <= 0.0f) return velocity;
+
+    float outwardVelocity = Vector3DotProduct(
+        velocity,
+        tangent
+    );
+
+    float distanceToLimit;
+
+    if (outwardVelocity > 0.0f)
+    {
+        distanceToLimit = maxAngle - angle;
+    }
+    else if (outwardVelocity < 0.0f)
+    {
+        distanceToLimit = angle - minAngle;
+    }
+    else
+    {
+        return velocity;
+    }
+
+    // 1 = full velocity outside the soft zone.
+    // 0 = no outward velocity at the hard limit.
+    float factor = Clamp(
+        distanceToLimit / zone,
+        0.0f,
+        1.0f
+    );
+
+    return Vector3Subtract(
+        velocity,
+        Vector3Scale(
+            tangent,
+            outwardVelocity * (1.0f - factor)
+        )
+    );
 }
 
 /**
@@ -257,6 +390,31 @@ static bool apply_spring_angle_limits(
             Vector3DotProduct(constrainedVelocity, constrained)
         )
     );
+
+    // ========================================
+    // OPTIONAL SOFT LIMIT BRAKING
+    // ========================================
+
+    if (limits.softZoneRadians > 0.0f)
+    {
+        constrainedVelocity = brake_soft_angular_velocity(
+            constrainedVelocity,
+            yawTangent,
+            yaw,
+            limits.minHorizontalRadians,
+            limits.maxHorizontalRadians,
+            limits.softZoneRadians
+        );
+
+        constrainedVelocity = brake_soft_angular_velocity(
+            constrainedVelocity,
+            pitchTangent,
+            pitch,
+            limits.minVerticalRadians,
+            limits.maxVerticalRadians,
+            limits.softZoneRadians
+        );
+    }
 
     float yawVelocity = Vector3DotProduct(
         constrainedVelocity,
@@ -483,6 +641,33 @@ void R3D_ResetAnimationSpringBone(R3D_SpringBoneState* state)
 
     state->previousWorld = MatrixIdentity();
     state->worldInitialized = false;
+
+    state->previousOriginWorld = Vector3Zero();
+    state->previousDirectionWorld = Vector3Zero();
+    state->trackingInitialized = false;
+}
+
+/**
+ * Starts or restarts simulation history at the current
+ * authored pose, without introducing a procedural rotation.
+ */
+static void initialize_spring_history(
+    R3D_SpringBoneState* state,
+    Vector3 targetTip,
+    Matrix modelToWorld,
+    Vector3 originWorld,
+    Vector3 directionWorld)
+{
+    state->tipModel = targetTip;
+    state->velocityModel = Vector3Zero();
+    state->initialized = true;
+
+    state->previousWorld = modelToWorld;
+    state->worldInitialized = true;
+
+    state->previousOriginWorld = originWorld;
+    state->previousDirectionWorld = directionWorld;
+    state->trackingInitialized = true;
 }
 
 bool R3D_ApplyAnimationSpringBone(
@@ -558,6 +743,22 @@ bool R3D_ApplyAnimationSpringBoneWorld(
         return false;
     }
 
+    const R3D_SpringBoneStability* stability =
+    &params.stability;
+
+    if (!isfinite(stability->teleportDistance) ||
+        !isfinite(stability->teleportAngleRadians) ||
+        !isfinite(stability->maxTipOffset) ||
+        !isfinite(stability->maxTipSpeed) ||
+        stability->teleportDistance < 0.0f ||
+        stability->teleportAngleRadians < 0.0f ||
+        stability->teleportAngleRadians > PI ||
+        stability->maxTipOffset < 0.0f ||
+        stability->maxTipSpeed < 0.0f)
+    {
+        return false;
+    }
+
     if (!finite_affine(modelToWorld))
     {
         return false;
@@ -597,7 +798,10 @@ bool R3D_ApplyAnimationSpringBoneWorld(
             !isfinite(limits->minHorizontalRadians) ||
             !isfinite(limits->maxHorizontalRadians) ||
             !isfinite(limits->minVerticalRadians) ||
-            !isfinite(limits->maxVerticalRadians))
+            !isfinite(limits->maxVerticalRadians) ||
+            !isfinite(limits->softZoneRadians) ||
+            limits->softZoneRadians < 0.0f ||
+            limits->softZoneRadians > PI)
         {
             return false;
         }
@@ -631,8 +835,16 @@ bool R3D_ApplyAnimationSpringBoneWorld(
     }
 
     if (state->initialized &&
-    (!finite_vec3(state->tipModel) ||
-     !finite_vec3(state->velocityModel)))
+        state->worldInitialized &&
+        !finite_affine(state->previousWorld))
+    {
+        return false;
+    }
+
+    if (state->initialized &&
+        state->trackingInitialized &&
+        (!finite_vec3(state->previousOriginWorld) ||
+         !finite_vec3(state->previousDirectionWorld)))
     {
         return false;
     }
@@ -703,24 +915,92 @@ bool R3D_ApplyAnimationSpringBoneWorld(
     }
 
     const Vector3 targetTip = Vector3Add(
+    origin,
+    authoredDirection
+);
+
+    // ========================================
+    // WORLD-SPACE TRACKING
+    // ========================================
+
+    const Vector3 originWorld = Vector3Transform(
         origin,
-        authoredDirection
+        modelToWorld
     );
 
-    // ========================================
-    // INITIALIZATION
-    // ========================================
+    Vector3 directionWorld = transform_direction(
+        authoredDirection,
+        modelToWorld
+    );
 
-        if (!state->initialized)
+    if (!finite_vec3(originWorld) ||
+        !normalize_safe(&directionWorld))
     {
-        // Initialize directly from the authored pose.
-        state->tipModel = targetTip;
-        state->velocityModel = Vector3Zero();
-        state->initialized = true;
+        return false;
+    }
 
-        state->previousWorld = modelToWorld;
-        state->worldInitialized = true;
+    // ========================================
+    // OPTIONAL TELEPORT DETECTION
+    // ========================================
 
+    bool teleportDetected = false;
+
+    if (state->initialized && state->trackingInitialized)
+    {
+        if (stability->teleportDistance > 0.0f)
+        {
+            const Vector3 displacement = Vector3Subtract(
+                originWorld,
+                state->previousOriginWorld
+            );
+
+            if (!finite_vec3(displacement))
+            {
+                return false;
+            }
+
+            if (Vector3Length(displacement) >
+                stability->teleportDistance)
+            {
+                teleportDetected = true;
+            }
+        }
+
+        if (stability->teleportAngleRadians > 0.0f)
+        {
+            float dot = Clamp(
+                Vector3DotProduct(
+                    directionWorld,
+                    state->previousDirectionWorld
+                ),
+                -1.0f,
+                1.0f
+            );
+
+            if (dot < cosf(
+                stability->teleportAngleRadians))
+            {
+                teleportDetected = true;
+            }
+        }
+    }
+
+    // ========================================
+    // INITIALIZATION / TELEPORT RECOVERY
+    // ========================================
+
+    if (!state->initialized || teleportDetected)
+    {
+        initialize_spring_history(
+            state,
+            targetTip,
+            modelToWorld,
+            originWorld,
+            directionWorld
+        );
+
+        // Preserve the freshly authored local pose.
+        // This avoids a huge procedural rotation on a teleport.
         return true;
     }
 
@@ -772,8 +1052,24 @@ bool R3D_ApplyAnimationSpringBoneWorld(
         );
     }
 
-    if (!finite_vec3(next.tipModel) ||
-        !finite_vec3(next.velocityModel))
+    // ========================================
+    // EXTREME MOVEMENT SAFEGUARDS
+    // ========================================
+
+    // This catches very large rebase displacements
+    // caused by world movement or earlier simulation history.
+    if (!cap_tip_offset(
+        &next.tipModel,
+        targetTip,
+        stability->maxTipOffset))
+    {
+        return false;
+    }
+
+    // Also handle previously accumulated high velocity.
+    if (!cap_vector_length(
+        &next.velocityModel,
+        stability->maxTipSpeed))
     {
         return false;
     }
@@ -816,6 +1112,24 @@ bool R3D_ApplyAnimationSpringBoneWorld(
 
     if (!finite_vec3(simulatedTip) ||
         !finite_vec3(simulatedVelocity))
+    {
+        return false;
+    }
+
+    // Clamp the output of the analytical step too.
+    // Protect against large external acceleration and
+    // velocity generated during this update.
+    if (!cap_tip_offset(
+        &simulatedTip,
+        targetTip,
+        stability->maxTipOffset))
+    {
+        return false;
+    }
+
+    if (!cap_vector_length(
+        &simulatedVelocity,
+        stability->maxTipSpeed))
     {
         return false;
     }
@@ -867,11 +1181,23 @@ bool R3D_ApplyAnimationSpringBoneWorld(
         )
     );
 
-    if (!finite_vec3(next.tipModel) ||
-    !finite_vec3(next.velocityModel))
+    if (!cap_vector_length(
+        &next.velocityModel,
+        stability->maxTipSpeed))
     {
         return false;
     }
+
+    if (!finite_vec3(next.tipModel) ||
+        !finite_vec3(next.velocityModel))
+    {
+        return false;
+    }
+
+    // Preserve tracking data for the next simulation update.
+    next.previousOriginWorld = originWorld;
+    next.previousDirectionWorld = directionWorld;
+    next.trackingInitialized = true;
 
     // Save the transform corresponding to this simulation step.
     // This is committed together with the updated state below.
