@@ -774,8 +774,7 @@ static bool anode_update(const R3D_AnimationTree* atree, R3D_AnimationTreeNode a
 // TREE NODE EVAL FUNCTIONS
 // ========================================
 
-static bool anode_eval_anim(const R3D_AnimationTree* atree, r3d_animtree_anim_t* node,
-                            int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_anim(const R3D_AnimationTree* atree, r3d_animtree_anim_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     const R3D_Animation* anim = node->animation;
     const R3D_AnimationState state = node->params.state;
@@ -838,8 +837,7 @@ static bool anode_eval_anim(const R3D_AnimationTree* atree, r3d_animtree_anim_t*
     return true;
 }
 
-static bool anode_eval_blend2(const R3D_AnimationTree* atree, r3d_animtree_blend2_t* node,
-                              int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_blend2(const R3D_AnimationTree* atree, r3d_animtree_blend2_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     const R3D_BoneMask* bmask = node->params.boneMask;
     const bool doBlend = !bmask || masked_bone(bmask, boneIdx);
@@ -879,8 +877,7 @@ static bool anode_eval_blend2(const R3D_AnimationTree* atree, r3d_animtree_blend
     return true;
 }
 
-static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t* node,
-                            int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     const R3D_BoneMask* bmask = node->params.boneMask;
     const bool doAdd = !bmask || masked_bone(bmask, boneIdx);
@@ -925,8 +922,7 @@ static bool anode_eval_add2(const R3D_AnimationTree* atree, r3d_animtree_add2_t*
     return true;
 }
 
-static bool anode_eval_switch(const R3D_AnimationTree* atree, r3d_animtree_switch_t* node,
-                              int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_switch(const R3D_AnimationTree* atree, r3d_animtree_switch_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     const bool isRm = info && is_root_bone(atree, boneIdx);
     const float wInvSum = node->weightsInvSum;
@@ -964,8 +960,7 @@ static bool anode_eval_switch(const R3D_AnimationTree* atree, r3d_animtree_switc
     return true;
 }
 
-static bool anode_eval_stm(const R3D_AnimationTree* atree, r3d_animtree_stm_t* node,
-                           int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_stm(const R3D_AnimationTree* atree, r3d_animtree_stm_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     const R3D_AnimationStmIndex activeIdx = node->activeIdx;
     const bool isRm = info && is_root_bone(atree, boneIdx);
@@ -1013,14 +1008,12 @@ static bool anode_eval_stm(const R3D_AnimationTree* atree, r3d_animtree_stm_t* n
     return true;
 }
 
-static bool anode_eval_stm_x(const R3D_AnimationTree* atree, r3d_animtree_stm_x_t* node,
-                             int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval_stm_x(const R3D_AnimationTree* atree, r3d_animtree_stm_x_t* node, int boneIdx, Transform* out, rminfo_t* info)
 {
     return anode_eval(atree, node->nested, boneIdx, out, info);
 }
 
-static bool anode_eval(const R3D_AnimationTree* atree, R3D_AnimationTreeNode anode,
-                       int boneIdx, Transform* out, rminfo_t* info)
+static bool anode_eval(const R3D_AnimationTree* atree, R3D_AnimationTreeNode anode, int boneIdx, Transform* out, rminfo_t* info)
 {
     switch(anode.base->type)
     {
@@ -1035,6 +1028,357 @@ static bool anode_eval(const R3D_AnimationTree* atree, R3D_AnimationTreeNode ano
         break;
     }
     return false;
+}
+
+
+/**
+ * Evaluate one morph-target weight through an animation
+ * tree node.
+ *
+ * The caller supplies the target's imported default weight.
+ * A clip that does not animate the mesh contributes that
+ * default instead of leaving stale weights behind.
+ *
+ * This is allocation-free and does not modify node state.
+ */
+static bool anode_eval_morph(R3D_AnimationTreeNode node, int meshIndex, int targetIndex, int targetCount, float defaultWeight, float* out)
+{
+    if (!node.base || !out)
+        return false;
+
+    switch (node.base->type)
+    {
+        // ========================================
+        // ANIMATION LEAF
+        // ========================================
+
+        case R3D_ANIMTREE_ANIM:
+        {
+            const r3d_animtree_anim_t* anim = node.anim;
+
+            if (!anim->animation)
+                return false;
+
+            const R3D_Animation* clip = anim->animation;
+
+            const R3D_MorphAnimationChannel* channel =
+                R3D_GetMorphAnimationChannel(
+                    clip,
+                    meshIndex
+                );
+
+            // This clip doesn't animate this mesh.
+            if (!channel)
+            {
+                *out = defaultWeight;
+                return true;
+            }
+
+            // Wrong model/animation combination.
+            if (channel->targetCount != targetCount)
+                return false;
+
+            const float timeTicks =
+                anim->params.state.currentTime *
+                clip->ticksPerSecond;
+
+            return R3D_SampleMorphAnimationWeight(
+                clip,
+                meshIndex,
+                targetIndex,
+                timeTicks,
+                defaultWeight,
+                out
+            );
+        }
+
+        // ========================================
+        // BLEND2
+        // ========================================
+
+        case R3D_ANIMTREE_BLEND2:
+        {
+            const r3d_animtree_blend2_t* blend = node.bln2;
+
+            float a = 0.0f;
+            float b = 0.0f;
+
+            if (!anode_eval_morph(
+                blend->inMain,
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &a))
+            {
+                return false;
+            }
+
+            if (!anode_eval_morph(
+                blend->inBlend,
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &b))
+            {
+                return false;
+            }
+
+            const float weight =
+                R3D_CLAMP(blend->params.blend, 0.0f, 1.0f);
+
+            *out = a + (b - a) * weight;
+
+            return isfinite(*out);
+        }
+
+        // ========================================
+        // ADD2
+        // ========================================
+
+        case R3D_ANIMTREE_ADD2:
+        {
+            const r3d_animtree_add2_t* add = node.add2;
+
+            float mainWeight = 0.0f;
+            float additiveWeight = 0.0f;
+
+            if (!anode_eval_morph(
+                add->inMain,
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &mainWeight))
+            {
+                return false;
+            }
+
+            if (!anode_eval_morph(
+                add->inAdd,
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &additiveWeight))
+            {
+                return false;
+            }
+
+            const float weight =
+                R3D_CLAMP(add->params.weight, 0.0f, 1.0f);
+
+            // Add relative to the imported rest weight.
+            // This prevents a nonzero default from being
+            // added twice.
+            *out = mainWeight +
+                (additiveWeight - defaultWeight) * weight;
+
+            return isfinite(*out);
+        }
+
+        // ========================================
+        // SWITCH
+        // ========================================
+
+        case R3D_ANIMTREE_SWITCH:
+        {
+            const r3d_animtree_switch_t* sw = node.swch;
+
+            if (!sw->inWeights || !sw->inList ||
+                sw->inCount <= 0 ||
+                !isfinite(sw->weightsInvSum) ||
+                sw->weightsInvSum <= 0.0f)
+            {
+                return false;
+            }
+
+            float result = 0.0f;
+            bool hasContribution = false;
+
+            for (int i = 0; i < sw->inCount; i++)
+            {
+                const float weight =
+                    sw->inWeights[i] * sw->weightsInvSum;
+
+                if (!isfinite(weight))
+                    return false;
+
+                if (weight == 0.0f)
+                    continue;
+
+                float value = 0.0f;
+
+                if (!anode_eval_morph(
+                    sw->inList[i],
+                    meshIndex, targetIndex, targetCount,
+                    defaultWeight, &value))
+                {
+                    return false;
+                }
+
+                result += value * weight;
+                hasContribution = true;
+            }
+
+            if (!hasContribution)
+                return false;
+
+            *out = result;
+
+            return isfinite(*out);
+        }
+
+        // ========================================
+        // STATE MACHINE
+        // ========================================
+
+        case R3D_ANIMTREE_STM:
+        {
+            const r3d_animtree_stm_t* stm = node.stm;
+
+            if (!stm->nodeList || !stm->stateList ||
+                stm->activeIdx < 0 ||
+                stm->activeIdx >= stm->statesCount)
+            {
+                return false;
+            }
+
+            const int activeIndex = stm->activeIdx;
+
+            float activeValue = 0.0f;
+
+            if (!anode_eval_morph(
+                stm->nodeList[activeIndex],
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &activeValue))
+            {
+                return false;
+            }
+
+            const r3d_stmedge_t* edge =
+                stm->stateList[activeIndex].activeIn;
+
+            if (!edge)
+            {
+                *out = activeValue;
+                return true;
+            }
+
+            if (edge->beginIdx < 0 ||
+                edge->beginIdx >= stm->statesCount)
+            {
+                return false;
+            }
+
+            float previousValue = 0.0f;
+
+            if (!anode_eval_morph(
+                stm->nodeList[edge->beginIdx],
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, &previousValue))
+            {
+                return false;
+            }
+
+            const float weight =
+                R3D_CLAMP(edge->endWeight, 0.0f, 1.0f);
+
+            *out = previousValue +
+                (activeValue - previousValue) * weight;
+
+            return isfinite(*out);
+        }
+
+        // ========================================
+        // STATE MACHINE EXIT
+        // ========================================
+
+        case R3D_ANIMTREE_STM_X:
+        {
+            return anode_eval_morph(
+                node.stmx->nested,
+                meshIndex, targetIndex, targetCount,
+                defaultWeight, out
+            );
+        }
+
+        default:
+            return false;
+    }
+}
+
+/**
+ * Evaluate a complete shape-key instance from the
+ * current AnimationTree state.
+ */
+bool R3D_EvaluateAnimationTreeMorphs(const R3D_AnimationTree* tree, int meshIndex, R3D_ShapeKeyInstance* instance)
+{
+    if (!tree || !tree->rootNode ||
+        !tree->rootNode->base ||
+        meshIndex < 0 ||
+        !instance ||
+        !instance->source ||
+        !instance->weights ||
+        !instance->source->keys)
+    {
+        return false;
+    }
+
+    const int targetCount =
+        instance->source->keyCount;
+
+    if (targetCount <= 0)
+        return false;
+
+    const R3D_AnimationLib* library =
+        &tree->player.animLib;
+
+    // Does this library animate morph targets on
+    // this mesh at all?
+    //
+    // If not, preserve manually controlled weights.
+    bool hasMorphTracks = false;
+
+    for (int i = 0; i < library->count; i++)
+    {
+        const R3D_MorphAnimationChannel* channel =
+            R3D_GetMorphAnimationChannel(
+                &library->animations[i],
+                meshIndex
+            );
+
+        if (!channel)
+            continue;
+
+        // Prevent applying channels from an
+        // incompatible mesh or model.
+        if (channel->targetCount != targetCount)
+            return false;
+
+        hasMorphTracks = true;
+    }
+
+    if (!hasMorphTracks)
+        return true;
+
+    // Evaluate the tree for every target independently.
+    // No scratch buffers or allocations per frame.
+    for (int i = 0; i < targetCount; i++)
+    {
+        float weight = 0.0f;
+
+        const float defaultWeight =
+            instance->source->keys[i].defaultWeight;
+
+        if (!anode_eval_morph(
+            *tree->rootNode,
+            meshIndex,
+            i,
+            targetCount,
+            defaultWeight,
+            &weight))
+        {
+            return false;
+        }
+
+        if (!R3D_SetShapeKeyWeight(
+            instance, i, weight))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // ========================================
@@ -1396,6 +1740,21 @@ bool R3D_ComputeAnimationTreeModelPose(R3D_AnimationTree* tree)
 void R3D_UpdateAnimationTreeEx(R3D_AnimationTree* tree, float dt, Transform* rootMotion, Transform* rootDistance)
 {
     if (!tree || !isfinite(dt) || dt < 0.0f) return;
+
+    // Morph-only animation trees have no skeletal pose.
+    // Their animation states still need to advance.
+    if (tree->player.skeleton.boneCount <= 0)
+    {
+        if (!R3D_AdvanceAnimationTree(tree, dt))
+        {
+            R3D_TRACELOG(
+                LOG_ERROR,
+                "Morph-only animation tree update failed"
+            );
+        }
+
+        return;
+    }
 
     if (R3D_AdvanceAnimationTree(tree, dt) &&
         R3D_ComputeAnimationTreeLocalPoseEx(tree, rootMotion, rootDistance) &&

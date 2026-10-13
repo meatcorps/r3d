@@ -10,6 +10,7 @@
 #include <r3d_config.h>
 #include <raymath.h>
 #include <string.h>
+#include <math.h>
 #include <glad.h>
 
 #include "./common/r3d_helper.h"
@@ -116,9 +117,176 @@ void R3D_UnloadAnimationLib(R3D_AnimationLib animLib)
         }
 
         r3d_free(anim->channels);
+
+        for (int m = 0; m < anim->morphChannelCount; m++)
+        {
+            R3D_MorphAnimationChannel* channel =
+                &anim->morphChannels[m];
+
+            r3d_free(channel->times);
+            r3d_free(channel->weights);
+        }
+
+        r3d_free(anim->morphChannels);
     }
 
     r3d_free(animLib.animations);
+}
+
+
+const R3D_MorphAnimationChannel*
+R3D_GetMorphAnimationChannel(
+    const R3D_Animation* animation,
+    int meshIndex)
+{
+    if (!animation || meshIndex < 0)
+        return NULL;
+
+    for (int i = 0; i < animation->morphChannelCount; i++)
+    {
+        const R3D_MorphAnimationChannel* channel =
+            &animation->morphChannels[i];
+
+        if (channel->meshIndex == meshIndex)
+            return channel;
+    }
+
+    return NULL;
+}
+
+bool R3D_SampleMorphAnimationWeight(
+    const R3D_Animation* animation,
+    int meshIndex,
+    int targetIndex,
+    float timeTicks,
+    float defaultWeight,
+    float* result)
+{
+    if (!animation || !result ||
+        meshIndex < 0 || targetIndex < 0 ||
+        !isfinite(timeTicks) ||
+        !isfinite(defaultWeight))
+    {
+        return false;
+    }
+
+    const R3D_MorphAnimationChannel* channel =
+        R3D_GetMorphAnimationChannel(
+            animation, meshIndex
+        );
+
+    // This clip does not animate this mesh.
+    if (!channel)
+    {
+        *result = defaultWeight;
+        return true;
+    }
+
+    if (targetIndex >= channel->targetCount ||
+        channel->keyCount <= 0 ||
+        !channel->times ||
+        !channel->weights)
+    {
+        return false;
+    }
+
+    const int count = channel->keyCount;
+    const int stride = channel->targetCount;
+
+    // Clamp before the first keyframe.
+    if (count == 1 || timeTicks <= channel->times[0])
+    {
+        *result = channel->weights[targetIndex];
+        return true;
+    }
+
+    // Clamp after the last keyframe.
+    if (timeTicks >= channel->times[count - 1])
+    {
+        *result = channel->weights[
+            (size_t)(count - 1) * stride + targetIndex
+        ];
+        return true;
+    }
+
+    // Binary search between two keyframes.
+    int lo = 0;
+    int hi = count - 1;
+
+    while (lo + 1 < hi)
+    {
+        int mid = lo + (hi - lo) / 2;
+
+        if (channel->times[mid] <= timeTicks)
+            lo = mid;
+        else
+            hi = mid;
+    }
+
+    float t0 = channel->times[lo];
+    float t1 = channel->times[hi];
+
+    float alpha = t1 > t0
+        ? (timeTicks - t0) / (t1 - t0)
+        : 0.0f;
+
+    float w0 = channel->weights[
+        (size_t)lo * stride + targetIndex
+    ];
+
+    float w1 = channel->weights[
+        (size_t)hi * stride + targetIndex
+    ];
+
+    *result = w0 + (w1 - w0) * alpha;
+
+    return isfinite(*result);
+}
+
+bool R3D_EvaluateMorphAnimation(const R3D_Animation* animation, int meshIndex, float timeTicks, R3D_ShapeKeyInstance* instance)
+{
+    if (!instance ||
+        !instance->source ||
+        !instance->weights ||
+        !isfinite(timeTicks))
+    {
+        return false;
+    }
+
+    const R3D_MorphAnimationChannel* channel =
+        R3D_GetMorphAnimationChannel(
+            animation, meshIndex
+        );
+
+    if (!channel)
+        return false;
+
+    const int targetCount = instance->source->keyCount;
+
+    // Reject incompatible model/animation combinations.
+    if (channel->targetCount != targetCount)
+        return false;
+
+    for (int i = 0; i < targetCount; i++)
+    {
+        float weight = 0.0f;
+
+        if (!R3D_SampleMorphAnimationWeight(
+            animation,
+            meshIndex,
+            i,
+            timeTicks,
+            instance->source->keys[i].defaultWeight,
+            &weight))
+        {
+            return false;
+        }
+
+        if (!R3D_SetShapeKeyWeight(instance, i, weight))
+            return false;
+    }
+
+    return true;
 }
 
 int R3D_GetAnimationIndex(R3D_AnimationLib animLib, const char* name)

@@ -10,6 +10,7 @@
 #define R3D_ANIMATION_TREE_H
 
 #include "./r3d_animation_player.h"
+#include "./r3d_shape_key.h"
 
 /**
  * @defgroup AnimationTree
@@ -221,6 +222,34 @@ R3DAPI void R3D_UnloadAnimationTree(R3D_AnimationTree tree);
  * @param dt Delta time in seconds.
  */
 R3DAPI void R3D_UpdateAnimationTree(R3D_AnimationTree* tree, float dt);
+
+/**
+ * @brief Evaluate imported morph animation through AnimationTree.
+ *
+ * Uses the current animation-node times, blend parameters,
+ * switch weights and state-machine transition weights.
+ *
+ * Call after R3D_UpdateAnimationTree(), or after
+ * R3D_AdvanceAnimationTree() when updating manually.
+ *
+ * meshIndex corresponds to R3D_Model.meshes[].
+ *
+ * A mesh with no morph tracks in the animation library
+ * is left unchanged.
+ *
+ * A clip without a morph channel contributes the
+ * shape key's imported default weight.
+ *
+ * Bone masks do not affect morph weights. Morph weights
+ * are evaluated per mesh, not per bone.
+ *
+ * Updates instance weights only. No CPU deformation
+ * or GPU geometry upload is performed.
+ *
+ * @return True on success, false for invalid data
+ *         or an incompatible morph target count.
+ */
+R3DAPI bool R3D_EvaluateAnimationTreeMorphs(const R3D_AnimationTree* tree, int meshIndex, R3D_ShapeKeyInstance* instance);
 
 /**
  * @brief Advances animation tree playback and transition states.

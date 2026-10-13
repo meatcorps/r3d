@@ -11,6 +11,7 @@
 
 #include "./r3d_platform.h"
 #include "./r3d_importer.h"
+#include "./r3d_shape_key.h"
 #include <raylib.h>
 #include <stdint.h>
 
@@ -49,6 +50,23 @@ typedef struct R3D_AnimationChannel {
 } R3D_AnimationChannel;
 
 /**
+ * @brief Imported morph-weight animation for one mesh.
+ *
+ * Mesh indices correspond to R3D_Model.meshes[] from
+ * the same source asset.
+ *
+ * Every keyframe stores one weight for every morph target.
+ */
+typedef struct R3D_MorphAnimationChannel {
+    int meshIndex;
+    int targetCount;
+    int keyCount;
+
+    float* times;     ///< Keyframe times in animation ticks.
+    float* weights;   ///< [keyCount][targetCount], row-major.
+} R3D_MorphAnimationChannel;
+
+/**
  * @brief Represents a skeletal animation for a model.
  *
  * Contains all animation channels required to animate a skeleton.
@@ -57,7 +75,9 @@ typedef struct R3D_AnimationChannel {
  */
 typedef struct R3D_Animation {
     R3D_AnimationChannel* channels;     ///< Array of animation channels, one per animated bone.
-    int channelCount;                   ///< Total number of channels in this animation.
+    int channelCount;                   ///< Total number of skeletal channels.
+    R3D_MorphAnimationChannel* morphChannels; ///< Array of morph animation channels, one per animated mesh.
+    int morphChannelCount;              ///< Total number of morph channels.
     float ticksPerSecond;               ///< Playback rate; number of animation ticks per second.
     float duration;                     ///< Total length of the animation, in ticks.
     int boneCount;                      ///< Number of bones in the target skeleton.
@@ -132,6 +152,44 @@ R3DAPI int R3D_GetAnimationIndex(R3D_AnimationLib animLib, const char* name);
  * @return Pointer to the animation, or NULL if not found.
  */
 R3DAPI R3D_Animation* R3D_GetAnimation(R3D_AnimationLib animLib, const char* name);
+
+/**
+ * @brief Find the imported morph channel for a mesh.
+ */
+R3DAPI const R3D_MorphAnimationChannel*
+R3D_GetMorphAnimationChannel(
+    const R3D_Animation* animation,
+    int meshIndex
+);
+
+/**
+ * @brief Sample one imported morph-weight curve.
+ *
+ * timeTicks is in animation ticks, not seconds.
+ * If the clip does not animate this mesh, returns
+ * defaultWeight through result.
+ */
+R3DAPI bool R3D_SampleMorphAnimationWeight(
+    const R3D_Animation* animation,
+    int meshIndex,
+    int targetIndex,
+    float timeTicks,
+    float defaultWeight,
+    float* result
+);
+
+/**
+ * @brief Evaluate all morph weights for one mesh.
+ *
+ * Only updates instance weights.
+ * Does not deform CPU vertices or upload GPU geometry.
+ */
+R3DAPI bool R3D_EvaluateMorphAnimation(
+    const R3D_Animation* animation,
+    int meshIndex,
+    float timeTicks,
+    R3D_ShapeKeyInstance* instance
+);
 
 #ifdef __cplusplus
 } // extern "C"
