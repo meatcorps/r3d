@@ -66,6 +66,7 @@ extern struct r3d_core_state {
     R3D_AntiAliasingPreset aaPreset;    //< Defines the anti aliasing quality preset
     R3D_AspectMode aspectMode;          //< Defines how the aspect ratio is calculated
     R3D_UpscaleMode upscaleMode;        //< Upscaling mode used during the final blit
+    float fsr1Sharpness;                //< RCAS strength in the range [0, 1].
     R3D_DownscaleMode downscaleMode;    //< Downscaling mode used during the final blit
     R3D_OutputMode outputMode;          //< Defines which buffer we should output in R3D_End()
     TextureFilter textureFilter;        //< Default texture filter for model loading

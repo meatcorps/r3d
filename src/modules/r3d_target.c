@@ -271,6 +271,16 @@ bool r3d_target_init(int resW, int resH)
 
 void r3d_target_quit(void)
 {
+    if (R3D_MOD_TARGET.fsr1Framebuffer)
+    {
+        glDeleteFramebuffers(1, &R3D_MOD_TARGET.fsr1Framebuffer);
+    }
+
+    if (R3D_MOD_TARGET.fsr1Texture)
+    {
+        glDeleteTextures(1, &R3D_MOD_TARGET.fsr1Texture);
+    }
+
     glDeleteTextures(R3D_TARGET_COUNT, R3D_MOD_TARGET.targetTextures);
     glDeleteTextures(1, &R3D_MOD_TARGET.depthTexture);
 
@@ -304,6 +314,97 @@ void r3d_target_resize(uint32_t resW, uint32_t resH)
             alloc_target_texture(i);
         }
     }
+}
+
+
+bool r3d_target_ensure_fsr1(int width, int height)
+{
+    if (width <= 0 || height <= 0) return false;
+
+    if (R3D_MOD_TARGET.fsr1Framebuffer &&
+        R3D_MOD_TARGET.fsr1Texture &&
+        R3D_MOD_TARGET.fsr1Width == width &&
+        R3D_MOD_TARGET.fsr1Height == height)
+    {
+        return true;
+    }
+
+    // Creating/resizing resources is rare, so preserve GL bindings here.
+    // The normal per-frame path above performs no state queries.
+    GLint previousActiveTexture = 0;
+    GLint previousTexture = 0;
+    GLint previousDrawFramebuffer = 0;
+    GLint previousReadFramebuffer = 0;
+
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+
+    if (!R3D_MOD_TARGET.fsr1Texture)
+    {
+        glGenTextures(1, &R3D_MOD_TARGET.fsr1Texture);
+    }
+
+    if (!R3D_MOD_TARGET.fsr1Framebuffer)
+    {
+        glGenFramebuffers(1, &R3D_MOD_TARGET.fsr1Framebuffer);
+    }
+
+    GLuint texture = R3D_MOD_TARGET.fsr1Texture;
+    GLuint framebuffer = R3D_MOD_TARGET.fsr1Framebuffer;
+
+    bool success = texture != 0 && framebuffer != 0;
+
+    if (success)
+    {
+        glBindTexture(GL_TEXTURE_2D, texture);
+
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_RGBA8,
+            width, height, 0,
+            GL_RGBA, GL_UNSIGNED_BYTE, NULL
+        );
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            texture,
+            0
+        );
+
+        success = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    }
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)previousDrawFramebuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)previousReadFramebuffer);
+
+    glBindTexture(GL_TEXTURE_2D, (GLuint)previousTexture);
+    glActiveTexture((GLenum)previousActiveTexture);
+
+    if (success)
+    {
+        R3D_MOD_TARGET.fsr1Width = width;
+        R3D_MOD_TARGET.fsr1Height = height;
+    }
+    else
+    {
+        TraceLog(LOG_WARNING, "R3D: Failed to allocate FSR1 intermediate target");
+    }
+
+    return success;
 }
 
 int r3d_target_get_min_level(r3d_target_t target)

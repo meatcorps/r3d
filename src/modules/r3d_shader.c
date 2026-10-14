@@ -77,6 +77,8 @@
 #include <shaders/common_linear.frag.h>
 #include <shaders/up_bicubic.frag.h>
 #include <shaders/up_lanczos.frag.h>
+#include <shaders/up_fsr1_easu.frag.h>
+#include <shaders/up_fsr1_rcas.frag.h>
 #include <shaders/down_rgss.frag.h>
 #include <shaders/down_pdss.frag.h>
 
@@ -1793,6 +1795,41 @@ bool r3d_shader_load_blit_up_lanczos(r3d_shader_custom_t* custom)
     return true;
 }
 
+bool r3d_shader_load_blit_up_fsr1_easu(r3d_shader_custom_t* custom)
+{
+    R3D_UNUSED(custom);
+
+    DECL_SHADER(r3d_shader_blit_up_fsr1_easu_t, blit, upFsr1Easu);
+    LOAD_SHADER(upFsr1Easu, SCREEN_VERT, UP_FSR1_EASU_FRAG);
+
+    GET_LOCATION(upFsr1Easu, uCon0);
+    GET_LOCATION(upFsr1Easu, uCon1);
+    GET_LOCATION(upFsr1Easu, uCon2);
+    GET_LOCATION(upFsr1Easu, uCon3);
+
+    USE_SHADER(upFsr1Easu);
+    SET_SAMPLER(upFsr1Easu, uSourceTex, R3D_SHADER_SAMPLER_SOURCE_2D_0);
+
+    return true;
+}
+
+bool r3d_shader_load_blit_up_fsr1_rcas(r3d_shader_custom_t* custom)
+{
+    R3D_UNUSED(custom);
+
+    DECL_SHADER(r3d_shader_blit_up_fsr1_rcas_t, blit, upFsr1Rcas);
+    LOAD_SHADER(upFsr1Rcas, SCREEN_VERT, UP_FSR1_RCAS_FRAG);
+
+    GET_LOCATION(upFsr1Rcas, uRcasCon);
+    GET_LOCATION(upFsr1Rcas, uOutputOffset);
+
+    USE_SHADER(upFsr1Rcas);
+    SET_SAMPLER(upFsr1Rcas, uSourceTex, R3D_SHADER_SAMPLER_SOURCE_2D_0);
+    SET_SAMPLER(upFsr1Rcas, uDepthTex, R3D_SHADER_SAMPLER_BUFFER_DEPTH);
+
+    return true;
+}
+
 bool r3d_shader_load_blit_down_rgss(r3d_shader_custom_t* custom)
 {
     R3D_UNUSED(custom);
@@ -1909,6 +1946,8 @@ void r3d_shader_quit(void)
     UNLOAD_SHADER(blit.commonLinear);
     UNLOAD_SHADER(blit.upBicubic);
     UNLOAD_SHADER(blit.upLanczos);
+    UNLOAD_SHADER(blit.upFsr1Easu);
+    UNLOAD_SHADER(blit.upFsr1Rcas);
     UNLOAD_SHADER(blit.downRgss);
     UNLOAD_SHADER(blit.downPdss);
 }

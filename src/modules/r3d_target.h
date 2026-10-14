@@ -144,6 +144,10 @@ extern struct r3d_mod_target {
     bool targetLoaded[R3D_TARGET_COUNT];                //< Indicates whether the targets have been allocated
 
     GLuint depthTexture;        //< Internal HW depth buffer
+    GLuint fsr1Framebuffer;
+    GLuint fsr1Texture;
+    int fsr1Width;
+    int fsr1Height;
     uint32_t resW, resH;        //< Full internal resolution
     float txlW, txlH;           //< Size of a texel for full resolution
 
@@ -194,6 +198,12 @@ int r3d_target_get_num_levels(r3d_target_t target);
  * Returns the internal resolution for the specified mip level.
  */
 void r3d_target_get_resolution(int* w, int* h, int level);
+
+/*
+ * Ensures that the color-only FSR1 intermediate target exists at output size.
+ * No allocation occurs if the size is already correct.
+ */
+bool r3d_target_ensure_fsr1(int width, int height);
 
 /*
  * Returns the texel size for the specified mip level.

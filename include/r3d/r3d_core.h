@@ -89,7 +89,8 @@ typedef enum R3D_UpscaleMode {
     R3D_UPSCALE_NEAREST,    ///< Nearest-neighbor upscaling: very fast, but produces blocky pixels.
     R3D_UPSCALE_LINEAR,     ///< Bilinear upscaling: very fast, smoother than nearest, but can appear blurry.
     R3D_UPSCALE_BICUBIC,    ///< Bicubic upscaling: slower, smoother, and less blurry than linear.
-    R3D_UPSCALE_LANCZOS     ///< Lanczos-2 upscaling: preserves more fine details, but is the most expensive.
+    R3D_UPSCALE_LANCZOS,     ///< Lanczos-2 upscaling: preserves more fine details, but is the most expensive.
+    R3D_UPSCALE_FSR1        ///< AMD FidelityFX FSR1: EASU followed by RCAS.
 } R3D_UpscaleMode;
 
 /**
@@ -244,6 +245,19 @@ R3DAPI R3D_UpscaleMode R3D_GetUpscaleMode(void);
  * @param mode The desired R3D_UpscaleMode.
  */
 R3DAPI void R3D_SetUpscaleMode(R3D_UpscaleMode mode);
+
+/**
+ * @brief Sets FSR1 RCAS sharpening strength.
+ *
+ * Range: 0.0 (weakest) to 1.0 (strongest).
+ * This controls RCAS when FSR1 upscaling is active.
+ */
+R3DAPI void R3D_SetFsr1Sharpness(float sharpness);
+
+/**
+ * @brief Gets the configured FSR1 RCAS sharpening strength.
+ */
+R3DAPI float R3D_GetFsr1Sharpness(void);
 
 /**
  * @brief Retrieves the current downscaling mode used for rendering.

@@ -374,6 +374,8 @@ embed_shaders(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/shaders/blit/common_linear.frag"
     "${R3D_ROOT_PATH}/shaders/blit/up_bicubic.frag"
     "${R3D_ROOT_PATH}/shaders/blit/up_lanczos.frag"
+    "${R3D_ROOT_PATH}/shaders/blit/up_fsr1_easu.frag"
+    "${R3D_ROOT_PATH}/shaders/blit/up_fsr1_rcas.frag"
     "${R3D_ROOT_PATH}/shaders/blit/down_rgss.frag"
     "${R3D_ROOT_PATH}/shaders/blit/down_pdss.frag"
 )

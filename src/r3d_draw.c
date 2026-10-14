@@ -3240,6 +3240,126 @@ r3d_target_t pass_post_smaa(r3d_target_t sceneTarget)
     return sceneTarget;
 }
 
+static bool blit_fsr1(r3d_target_t source, GLuint dstId, int dstX, int glDstY, int dstW, int dstH, int srcW, int srcH)
+{
+    // FSR1 is only used for genuine upscaling.
+    if (dstW <= srcW || dstH <= srcH) return false;
+
+    if (!r3d_target_ensure_fsr1(dstW, dstH)) return false;
+
+    const float invSrcW = 1.0f / (float)srcW;
+    const float invSrcH = 1.0f / (float)srcH;
+
+    const float scaleX = (float)srcW / (float)dstW;
+    const float scaleY = (float)srcH / (float)dstH;
+
+    // AMD FsrEasuCon(), specialized for:
+    // input viewport = input resource size = internal render resolution.
+    // output size = resolved presentation viewport.
+    const Vector4 con0 = {
+        scaleX,
+        scaleY,
+        0.5f * scaleX - 0.5f,
+        0.5f * scaleY - 0.5f
+    };
+
+    const Vector4 con1 = {
+        invSrcW,
+        invSrcH,
+        invSrcW,
+        -invSrcH
+    };
+
+    const Vector4 con2 = {
+        -invSrcW,
+        2.0f * invSrcH,
+        invSrcW,
+        2.0f * invSrcH
+    };
+
+    const Vector4 con3 = {
+        0.0f,
+        4.0f * invSrcH,
+        0.0f,
+        0.0f
+    };
+
+    // ----------------------------
+    // Pass 1: EASU
+    // ----------------------------
+
+    glBindFramebuffer(GL_FRAMEBUFFER, R3D_MOD_TARGET.fsr1Framebuffer);
+    glViewport(0, 0, dstW, dstH);
+
+    r3d_driver_disable(GL_DEPTH_TEST);
+    r3d_driver_disable(GL_BLEND);
+    r3d_driver_set_depth_mask(GL_FALSE);
+
+    R3D_SHADER_USE(blit.upFsr1Easu);
+
+    R3D_SHADER_SET_VEC4(blit.upFsr1Easu, uCon0, con0);
+    R3D_SHADER_SET_VEC4(blit.upFsr1Easu, uCon1, con1);
+    R3D_SHADER_SET_VEC4(blit.upFsr1Easu, uCon2, con2);
+    R3D_SHADER_SET_VEC4(blit.upFsr1Easu, uCon3, con3);
+
+    R3D_SHADER_BIND_SAMPLER(
+        blit.upFsr1Easu,
+        uSourceTex,
+        r3d_target_get(source)
+    );
+
+    R3D_RENDER_SCREEN();
+
+    // ----------------------------
+    // Pass 2: RCAS
+    // ----------------------------
+
+    glBindFramebuffer(GL_FRAMEBUFFER, dstId);
+    glViewport(dstX, glDstY, dstW, dstH);
+
+    r3d_driver_enable(GL_DEPTH_TEST);
+    r3d_driver_set_depth_func(GL_ALWAYS);
+    r3d_driver_set_depth_mask(GL_TRUE);
+
+    // AMD's RCAS parameter:
+    // 0 stops = maximum sharpening
+    // 2 stops = minimum sharpening
+    //
+    // Our public API reverses this into user-friendly [0, 1].
+    const float rcasStops = 2.0f * (1.0f - R3D.fsr1Sharpness);
+    const float rcasStrength = exp2f(-rcasStops);
+
+    const Vector4 rcasCon = {
+        rcasStrength, 0.0f, 0.0f, 0.0f
+    };
+
+    R3D_SHADER_USE(blit.upFsr1Rcas);
+
+    R3D_SHADER_SET_VEC4(blit.upFsr1Rcas, uRcasCon, rcasCon);
+
+    R3D_SHADER_SET_VEC2(
+        blit.upFsr1Rcas,
+        uOutputOffset,
+        ((Vector2){(float)dstX, (float)glDstY})
+    );
+
+    R3D_SHADER_BIND_SAMPLER(
+        blit.upFsr1Rcas,
+        uSourceTex,
+        R3D_MOD_TARGET.fsr1Texture
+    );
+
+    R3D_SHADER_BIND_SAMPLER(
+        blit.upFsr1Rcas,
+        uDepthTex,
+        r3d_target_get_depth_buffer()
+    );
+
+    R3D_RENDER_SCREEN();
+
+    return true;
+}
+
 void blit_to_screen(r3d_target_t source)
 {
     if (!r3d_target_exists(source))
@@ -3322,6 +3442,19 @@ void blit_to_screen(r3d_target_t source)
             R3D_SHADER_BIND_SAMPLER(blit.upLanczos, uDepthTex, r3d_target_get_depth_buffer());
             R3D_RENDER_SCREEN();
             break;
+        case R3D_UPSCALE_FSR1:
+            if (blit_fsr1(source, dstId, dstX, glDstY, dstW, dstH, srcW, srcH))
+            {
+                break;
+            }
+
+            // Unsupported dimensions or allocation failure:
+            // retain a valid output using ordinary bilinear scaling.
+            R3D_SHADER_USE(blit.commonLinear);
+            R3D_SHADER_BIND_SAMPLER(blit.commonLinear, uSourceTex, r3d_target_get(source));
+            R3D_SHADER_BIND_SAMPLER(blit.commonLinear, uDepthTex, r3d_target_get_depth_buffer());
+            R3D_RENDER_SCREEN();
+            break;
         default:
             break;
         }
@@ -3360,9 +3493,21 @@ void blit_to_screen(r3d_target_t source)
     }
     else
     {
-        R3D_SHADER_USE(blit.commonCopy);
-        R3D_SHADER_BIND_SAMPLER(blit.commonCopy, uSourceTex, r3d_target_get(source));
-        R3D_SHADER_BIND_SAMPLER(blit.commonCopy, uDepthTex, r3d_target_get_depth_buffer());
+        if (dstW == srcW && dstH == srcH)
+        {
+            R3D_SHADER_USE(blit.commonCopy);
+            R3D_SHADER_BIND_SAMPLER(blit.commonCopy, uSourceTex, r3d_target_get(source));
+            R3D_SHADER_BIND_SAMPLER(blit.commonCopy, uDepthTex, r3d_target_get_depth_buffer());
+        }
+        else
+        {
+            // Equal pixel count, different dimensions:
+            // a direct texel copy would be incorrect.
+            R3D_SHADER_USE(blit.commonLinear);
+            R3D_SHADER_BIND_SAMPLER(blit.commonLinear, uSourceTex, r3d_target_get(source));
+            R3D_SHADER_BIND_SAMPLER(blit.commonLinear, uDepthTex, r3d_target_get_depth_buffer());
+        }
+
         R3D_RENDER_SCREEN();
     }
 }

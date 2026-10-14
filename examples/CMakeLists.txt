@@ -69,6 +69,7 @@ add_example(r3d_shape_keys_cpu "examples/shape_keys_cpu.c")
 add_example(r3d_shape_keys_gpu "examples/shape_keys_gpu.c")
 add_example(r3d_shape_keys_imported "examples/shape_keys_imported.c")
 add_example(r3d_shape_keys_tree "examples/shape_keys_tree.c")
+add_example(r3d_fsr "examples/fsr.c")
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")

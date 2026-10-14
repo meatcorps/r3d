@@ -9,6 +9,7 @@
 #include <r3d/r3d_core.h>
 #include <raymath.h>
 #include <float.h>
+#include <math.h>
 #include <glad.h>
 
 #include "./modules/r3d_texture.h"
@@ -150,6 +151,7 @@ bool R3D_Init(int resWidth, int resHeight)
     R3D.aaPreset      = R3D_ANTI_ALIASING_PRESET_MEDIUM;
     R3D.aspectMode    = R3D_ASPECT_EXPAND;
     R3D.upscaleMode   = R3D_UPSCALE_NEAREST;
+    R3D.fsr1Sharpness = 0.5f;
     R3D.downscaleMode = R3D_DOWNSCALE_NEAREST;
     R3D.outputMode    = R3D_OUTPUT_SCENE;
 
@@ -289,6 +291,17 @@ R3D_UpscaleMode R3D_GetUpscaleMode(void)
 void R3D_SetUpscaleMode(R3D_UpscaleMode mode)
 {
     R3D.upscaleMode = mode;
+}
+
+void R3D_SetFsr1Sharpness(float sharpness)
+{
+    if (!isfinite(sharpness)) return;
+    R3D.fsr1Sharpness = Clamp(sharpness, 0.0f, 1.0f);
+}
+
+float R3D_GetFsr1Sharpness(void)
+{
+    return R3D.fsr1Sharpness;
 }
 
 R3D_DownscaleMode R3D_GetDownscaleMode(void)
