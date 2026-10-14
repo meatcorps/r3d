@@ -14,6 +14,7 @@
 #include <glad.h>
 
 #include "./modules/r3d_shader.h"
+#include "./modules/r3d_effect.h"
 #include "./common/r3d_rshade.h"
 #include "./common/r3d_helper.h"
 
@@ -230,6 +231,9 @@ R3D_SurfaceShader* R3D_LoadSurfaceShaderAlias(R3D_SurfaceShader* shader)
 
 void R3D_UnloadSurfaceShader(R3D_SurfaceShader* shader)
 {
+    if (!shader) return;
+
+    r3d_effect_invalidate_base(shader);
     r3d_shader_custom_free(shader);
 }
 

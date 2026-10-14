@@ -1315,6 +1315,8 @@ void r3d_render_upload_elements(int offset, const GLuint* indices, int count)
 
 void r3d_render_clear(void)
 {
+    memset(&R3D_MOD_RENDER.stats, 0, sizeof(R3D_MOD_RENDER.stats));
+
     for (int i = 0; i < R3D_RENDER_LIST_COUNT; i++)
     {
         R3D_LIST_CLEAR(R3D_MOD_RENDER.list[i]);
@@ -1503,6 +1505,8 @@ void r3d_render_call_push(const r3d_render_call_t* call)
     // Push this draw call and its group index
     R3D_LIST_PUSH(R3D_MOD_RENDER.groupIndices, groupIndex);
     R3D_LIST_PUSH(R3D_MOD_RENDER.calls, *call);
+
+    R3D_MOD_RENDER.stats.submittedCalls++;
 
     // Push draw call index in the passes lists
     bool instanced = r3d_render_has_instances(group);
@@ -2082,6 +2086,39 @@ static bool bind_draw_morph(const r3d_render_call_t* call)
     return true;
 }
 
+static uint64_t stats_count_triangles(GLenum primitive, int count)
+{
+    if (count < 3) return 0;
+
+    switch (primitive)
+    {
+        case GL_TRIANGLES:
+            return (uint64_t)(count / 3);
+
+        case GL_TRIANGLE_STRIP:
+        case GL_TRIANGLE_FAN:
+            return (uint64_t)(count - 2);
+
+        default:
+            return 0;
+    }
+}
+
+static void stats_record_draw(GLenum primitive, int referenceCount, int instanceCount)
+{
+    R3D_RenderStats* stats = &R3D_MOD_RENDER.stats;
+
+    stats->drawCalls++;
+
+    if (referenceCount <= 0 || instanceCount <= 0)
+        return;
+
+    uint64_t instances = (uint64_t)instanceCount;
+
+    stats->vertexReferences += (uint64_t)referenceCount * instances;
+    stats->triangles += stats_count_triangles(primitive, referenceCount) * instances;
+}
+
 void r3d_render_draw(const r3d_render_call_t* call)
 {
     GLenum primitive;
@@ -2105,6 +2142,20 @@ void r3d_render_draw(const r3d_render_call_t* call)
             (void*)(indexRange.offset * sizeof(GLuint)),
             vertexRange.offset
         );
+    }
+
+    int referenceCount = indexRange.count > 0 ? indexRange.count : vertexRange.count;
+
+    stats_record_draw(primitive, referenceCount, 1);
+
+    if (call->type == R3D_RENDER_CALL_MESH)
+    {
+        R3D_MOD_RENDER.stats.meshDrawCalls++;
+        R3D_MOD_RENDER.stats.meshInstances++;
+    }
+    else
+    {
+        R3D_MOD_RENDER.stats.decalDrawCalls++;
     }
 }
 
@@ -2138,6 +2189,22 @@ void r3d_render_draw_instanced(const r3d_render_call_t* call)
         );
     }
 
+    int referenceCount = indexRange.count > 0 ? indexRange.count : vertexRange.count;
+
+    stats_record_draw(primitive, referenceCount, group->instanceCount);
+
+    R3D_MOD_RENDER.stats.instancedDrawCalls++;
+
+    if (call->type == R3D_RENDER_CALL_MESH)
+    {
+        R3D_MOD_RENDER.stats.meshDrawCalls++;
+        R3D_MOD_RENDER.stats.meshInstances += (uint64_t)group->instanceCount;
+    }
+    else
+    {
+        R3D_MOD_RENDER.stats.decalDrawCalls++;
+    }
+
     // Instance attributes (locations 10-14) are intentionally left enabled after
     // the draw. This is safe as long as non-instanced vertex shaders
     // never read those locations.
@@ -2168,4 +2235,9 @@ void r3d_render_draw_shape(r3d_render_shape_enum_t shape)
             s->vertices.offset
         );
     }
+
+    int referenceCount = s->elements.count > 0 ? s->elements.count : s->vertices.count;
+
+    stats_record_draw(GL_TRIANGLES, referenceCount, 1);
+    R3D_MOD_RENDER.stats.internalDrawCalls++;
 }

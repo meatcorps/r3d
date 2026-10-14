@@ -9,6 +9,7 @@
 #include <r3d/r3d_utils.h>
 #include <math.h>
 #include "./modules/r3d_texture.h"
+#include "./modules/r3d_render.h"
 #include "./modules/r3d_target.h"
 #include "./r3d_core_state.h"
 
@@ -148,4 +149,62 @@ bool R3D_MatrixEquals(Matrix a, Matrix b)
     }
 
     return true;
+}
+
+R3D_RenderStats R3D_GetRenderStats(void)
+{
+    return R3D_MOD_RENDER.stats;
+}
+
+void R3D_DrawRenderStats(int x, int y)
+{
+    R3D_RenderStats stats = R3D_GetRenderStats();
+
+    const int width = 370;
+    const int height = 177;
+    const int left = x + 10;
+
+    DrawRectangle(x, y, width, height, Fade(BLACK, 0.82f));
+
+    DrawText("R3D RENDER STATS", left, y + 8, 19, YELLOW);
+
+    DrawText(
+        TextFormat("FPS: %d    Queued: %llu",
+            GetFPS(),
+            (unsigned long long)stats.submittedCalls),
+        left, y + 35, 16, RAYWHITE
+    );
+
+    DrawText(
+        TextFormat("GL draws: %llu    Instanced: %llu",
+            (unsigned long long)stats.drawCalls,
+            (unsigned long long)stats.instancedDrawCalls),
+        left, y + 58, 16, RAYWHITE
+    );
+
+    DrawText(
+        TextFormat("Mesh: %llu  Decal: %llu  Internal: %llu",
+            (unsigned long long)stats.meshDrawCalls,
+            (unsigned long long)stats.decalDrawCalls,
+            (unsigned long long)stats.internalDrawCalls),
+        left, y + 81, 16, LIGHTGRAY
+    );
+
+    DrawText(
+        TextFormat("Triangles: %llu",
+            (unsigned long long)stats.triangles),
+        left, y + 104, 16, SKYBLUE
+    );
+
+    DrawText(
+        TextFormat("Vertex references: %llu",
+            (unsigned long long)stats.vertexReferences),
+        left, y + 127, 16, LIGHTGRAY
+    );
+
+    DrawText(
+        TextFormat("Mesh instances: %llu",
+            (unsigned long long)stats.meshInstances),
+        left, y + 150, 16, LIGHTGRAY
+    );
 }

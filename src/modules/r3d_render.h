@@ -13,6 +13,7 @@
 #include <r3d/r3d_instance.h>
 #include <r3d/r3d_material.h>
 #include <r3d/r3d_draw.h>
+#include <r3d/r3d_utils.h>
 #include <r3d/r3d_skeleton.h>
 #include <r3d/r3d_frustum.h>
 #include <r3d/r3d_decal.h>
@@ -323,6 +324,7 @@ extern struct r3d_mod_render {
     r3d_list_t* freeElements;                           //< Free list of released index ranges available for reuse (list<r3d_render_range_t>)
 
     r3d_render_instance_state_t instanceState;          //< Cached instance binding configuration
+    R3D_RenderStats stats;                              //< Counters for the current rendering frame
 
     // Dynamic active morph entries, captured at submission.
     r3d_render_morph_entry_t* morphEntries;

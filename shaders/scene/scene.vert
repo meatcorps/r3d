@@ -295,6 +295,11 @@ void main()
 
     #if !defined(DECAL)
     ApplyGpuMorphs();
+
+    #ifdef R3D_SURFACE_EFFECT_POST_MORPH
+    r3dEffectPostMorph();
+    #endif
+
     #endif
 
     vec3 billboardCenter = vec3(MATRIX_MODEL[3]);

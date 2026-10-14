@@ -11,6 +11,7 @@
 
 #include "./r3d_platform.h"
 #include <raylib.h>
+#include <stdint.h>
 
 /**
  * @defgroup Utils Utility Functions
@@ -18,9 +19,50 @@
  * @{
  */
 
+/**
+ * Rendering statistics for the current or most recently completed R3D frame.
+ *
+ * Draw and triangle counts include all R3D rendering passes:
+ * shadows, probes, scene rendering and internal fullscreen passes.
+ * Instanced geometry contributes its full expanded triangle count.
+ *
+ * These are CPU-side counters, not GPU timing or hardware pipeline queries.
+ */
+typedef struct R3D_RenderStats {
+ uint64_t submittedCalls;       ///< Logical mesh/decal calls queued by the application
+ uint64_t drawCalls;            ///< Actual OpenGL draw calls issued by R3D
+ uint64_t meshDrawCalls;        ///< Draw calls for meshes, including repeated rendering passes
+ uint64_t decalDrawCalls;       ///< Draw calls for decals
+ uint64_t internalDrawCalls;    ///< Internal shapes and fullscreen rendering
+ uint64_t instancedDrawCalls;   ///< Draw calls issued using instanced rendering
+ uint64_t triangles;            ///< Total triangle work, including instancing and repeated passes
+ uint64_t vertexReferences;     ///< Submitted vertex/index references, not unique vertices
+ uint64_t meshInstances;        ///< Mesh instances rendered across passes, counting ordinary draws as one
+} R3D_RenderStats;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// ----------------------------------------
+// UTILS: Rendering Statistics
+// ----------------------------------------
+
+/**
+ * Returns the render statistics.
+ *
+ * Statistics reset at R3D_Begin() and accumulate through R3D_End().
+ * Call after R3D_End() for complete results.
+ */
+R3DAPI R3D_RenderStats R3D_GetRenderStats(void);
+
+/**
+ * Draws a simple statistics overlay using raylib's 2D functions.
+ *
+ * Call between BeginDrawing()/EndDrawing(), after R3D_End().
+ * The overlay itself is not included in R3D's rendering statistics.
+ */
+R3DAPI void R3D_DrawRenderStats(int x, int y);
 
 // ----------------------------------------
 // UTILS: Bounding Box Functions

@@ -29,6 +29,7 @@
 #include "./modules/r3d_driver.h"
 #include "./modules/r3d_target.h"
 #include "./modules/r3d_shader.h"
+#include "./modules/r3d_effect.h"
 #include "./modules/r3d_render.h"
 #include "./modules/r3d_light.h"
 #include "./modules/r3d_env.h"
@@ -514,6 +515,9 @@ void R3D_BeginPro(R3D_View view)
 void R3D_End(void)
 {
     r3d_render_prepare_drawing(); // bind global VAO
+
+    // Upload all temporary-effect parameters before any rendering pass.
+    r3d_effect_upload_frame();
 
     /* --- Invalidates OpenGL cache and save some infos --- */
 
@@ -1537,8 +1541,23 @@ void raster_depth(const r3d_render_call_t* call, const Matrix* viewProj, const r
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.depth, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.depth, shader)->id
+    );
 
     /* --- Send matrices --- */
 
@@ -1605,8 +1624,23 @@ void raster_depth_cube(const r3d_render_call_t* call, const Matrix* viewProj, co
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.depthCube, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.depthCube, shader)->id
+    );
 
     /* --- Set shadow related data --- */
 
@@ -1676,8 +1710,23 @@ void raster_probe_forward(const r3d_render_call_t* call, const r3d_env_probe_job
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.probeForward, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.probeForward, shader)->id
+    );
 
     /* --- Set probe related data --- */
 
@@ -1771,8 +1820,23 @@ void raster_probe_unlit(const r3d_render_call_t* call, const r3d_env_probe_job_t
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.probeUnlit, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.probeUnlit, shader)->id
+    );
 
     /* --- Send matrices --- */
 
@@ -1848,8 +1912,23 @@ void raster_geometry(const r3d_render_call_t* call)
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.geometry, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.geometry, shader)->id
+    );
 
     /* --- Send matrices --- */
 
@@ -2001,8 +2080,23 @@ void raster_forward(const r3d_render_call_t* call)
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.forward, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.forward, shader)->id
+    );
 
     /* --- Set view related data --- */
 
@@ -2090,8 +2184,23 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque)
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* shader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+
+    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount
+    );
+
     R3D_SHADER_USE_SELECT(scene.unlit, shader);
+
+    r3d_effect_bind_shader(
+        shader,
+        baseShader,
+        group->effectFirstSnapshot,
+        group->effectSnapshotCount,
+        R3D_SHADER_SELECT(scene.unlit, shader)->id
+    );
 
     /* --- Send matrices --- */
 
