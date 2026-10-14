@@ -8,6 +8,7 @@
 
 #include "./r3d_render.h"
 #include "./r3d_shader.h"
+#include "./r3d_effect.h"
 #include <r3d_config.h>
 #include <raymath.h>
 #include <stdint.h>
@@ -912,6 +913,8 @@ bool r3d_render_init(void)
 
     R3D_MOD_RENDER.activeCluster = -1;
 
+    r3d_effect_init();
+
     /* --- CPU free list allocation --- */
 
     R3D_MOD_RENDER.freeVertices = R3D_LIST_CREATE(r3d_render_range_t, R3D_HINT(R3D_HINT_MESH_STREAMING_CAPACITY));
@@ -1045,6 +1048,7 @@ void r3d_render_quit(void)
 
     free(R3D_MOD_RENDER.morphEntries);
     free(R3D_MOD_RENDER.morphUniforms);
+    r3d_effect_quit();
 
     /* --- Release CPU arrays --- */
 
@@ -1323,6 +1327,7 @@ void r3d_render_clear(void)
     R3D_LIST_CLEAR(R3D_MOD_RENDER.calls);
     R3D_LIST_CLEAR(R3D_MOD_RENDER.groupIndices);
     R3D_LIST_CLEAR(R3D_MOD_RENDER.sortCache);
+    r3d_effect_clear();
     R3D_LIST_CLEAR(R3D_MOD_RENDER.modeStack);
 
     R3D_MOD_RENDER.groupCulled = false;
@@ -1450,10 +1455,22 @@ void r3d_render_group_push(const r3d_render_group_t* group)
     };
 
     r3d_render_indices_t indices = {0};
+    r3d_render_group_t submitted = *group;
+
+    submitted.effectFirstSnapshot = 0;
+    submitted.effectSnapshotCount = 0;
+
+    if (r3d_effect_has_active())
+    {
+        r3d_effect_capture(
+            &submitted.effectFirstSnapshot,
+            &submitted.effectSnapshotCount
+        );
+    }
 
     R3D_LIST_PUSH(R3D_MOD_RENDER.groupVisibility, visibility);
     R3D_LIST_PUSH(R3D_MOD_RENDER.callIndices, indices);
-    R3D_LIST_PUSH(R3D_MOD_RENDER.groups, *group);
+    R3D_LIST_PUSH(R3D_MOD_RENDER.groups, submitted);
 }
 
 void r3d_render_call_push(const r3d_render_call_t* call)

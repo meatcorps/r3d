@@ -71,6 +71,7 @@ add_example(r3d_shape_keys_imported "examples/shape_keys_imported.c")
 add_example(r3d_shape_keys_tree "examples/shape_keys_tree.c")
 add_example(r3d_fsr "examples/fsr.c")
 add_example(r3d_draw_immediate "examples/draw_immediate.c")
+add_example(r3d_draw_surface_effects "examples/draw_surface_effects.c")
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")

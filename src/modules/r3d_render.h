@@ -199,6 +199,8 @@ typedef struct {
     R3D_InstanceBuffer instances;   //< Instance buffer to use
     int instanceOffset;             //< Offset to the first instance
     int instanceCount;              //< Number of instances
+    int effectFirstSnapshot;        //< First captured effect for this group
+    int effectSnapshotCount;        //< Number of active effects at submission
 } r3d_render_group_t;
 
 /*

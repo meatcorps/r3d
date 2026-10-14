@@ -287,6 +287,7 @@ add_library(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/src/r3d_kinematics.c"
     "${R3D_ROOT_PATH}/src/r3d_lighting.c"
     "${R3D_ROOT_PATH}/src/r3d_surface_shader.c"
+    "${R3D_ROOT_PATH}/src/r3d_surface_effect.c"
     "${R3D_ROOT_PATH}/src/r3d_screen_shader.c"
     "${R3D_ROOT_PATH}/src/r3d_sky_shader.c"
     "${R3D_ROOT_PATH}/src/r3d_material.c"
