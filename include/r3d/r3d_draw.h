@@ -46,6 +46,40 @@ typedef struct R3D_View {
 } R3D_View;
 
 /**
+ * Fields that a temporary render mode overrides.
+ * Fields without a matching bit retain their original material values.
+ */
+typedef enum R3D_RenderModeOverride {
+    R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY = 1u << 0,
+    R3D_RENDER_MODE_OVERRIDE_BLEND        = 1u << 1,
+    R3D_RENDER_MODE_OVERRIDE_CULL         = 1u << 2,
+    R3D_RENDER_MODE_OVERRIDE_DEPTH        = 1u << 3,
+    R3D_RENDER_MODE_OVERRIDE_STENCIL      = 1u << 4,
+    R3D_RENDER_MODE_OVERRIDE_UNLIT        = 1u << 5,
+    R3D_RENDER_MODE_OVERRIDE_PRIORITY     = 1u << 6,
+    R3D_RENDER_MODE_OVERRIDE_SHADOW       = 1u << 7,
+} R3D_RenderModeOverride;
+
+/**
+ * Temporary render-state overrides.
+ *
+ * Only fields selected in overrideMask are used.
+ * No source material or mesh is modified.
+ */
+typedef struct R3D_RenderMode {
+    uint32_t overrideMask;
+
+    R3D_TransparencyMode transparencyMode;
+    R3D_BlendMode blendMode;
+    R3D_CullMode cullMode;
+    R3D_DepthState depth;
+    R3D_StencilState stencil;
+    bool unlit;
+    int priority;
+    R3D_ShadowCastMode shadowCastMode;
+} R3D_RenderMode;
+
+/**
  * @brief A world-space point projected into output-target coordinates.
  *
  * Position is in target pixels with a top-left origin.
@@ -180,6 +214,19 @@ R3DAPI void R3D_BeginPro(R3D_View view);
  * post-processing effects.
  */
 R3DAPI void R3D_End(void);
+
+/**
+ * Pushes temporary render-state overrides.
+ * Nested scopes combine their explicitly overridden fields.
+ * State is captured when each mesh draw is submitted.
+ */
+R3DAPI void R3D_PushRenderMode(R3D_RenderMode mode);
+
+/**
+ * Restores the previous render-mode scope.
+ * Already submitted draw calls remain unaffected.
+ */
+R3DAPI void R3D_PopRenderMode(void);
 
 /**
  * @brief Begins a clustered draw pass.

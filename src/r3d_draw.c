@@ -697,6 +697,16 @@ void R3D_End(void)
     cleanup_after_render();
 }
 
+void R3D_PushRenderMode(R3D_RenderMode mode)
+{
+    r3d_render_mode_push(mode);
+}
+
+void R3D_PopRenderMode(void)
+{
+    r3d_render_mode_pop();
+}
+
 void R3D_BeginCluster(BoundingBox aabb)
 {
     if (!r3d_render_cluster_begin(aabb))

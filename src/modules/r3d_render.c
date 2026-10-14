@@ -908,6 +908,7 @@ bool r3d_render_init(void)
     R3D_MOD_RENDER.calls        = R3D_LIST_CREATE(r3d_render_call_t, cap);
     R3D_MOD_RENDER.groupIndices = R3D_LIST_CREATE(int, cap);
     R3D_MOD_RENDER.sortCache    = R3D_LIST_CREATE(r3d_render_sort_t, cap);
+    R3D_MOD_RENDER.modeStack    = R3D_LIST_CREATE(R3D_RenderMode, 8);
 
     R3D_MOD_RENDER.activeCluster = -1;
 
@@ -1059,6 +1060,7 @@ void r3d_render_quit(void)
     R3D_LIST_DESTROY(R3D_MOD_RENDER.clusters);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.groups);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.calls);
+    R3D_LIST_DESTROY(R3D_MOD_RENDER.modeStack);
 
     /* --- Realease free lists --- */
 
@@ -1321,6 +1323,7 @@ void r3d_render_clear(void)
     R3D_LIST_CLEAR(R3D_MOD_RENDER.calls);
     R3D_LIST_CLEAR(R3D_MOD_RENDER.groupIndices);
     R3D_LIST_CLEAR(R3D_MOD_RENDER.sortCache);
+    R3D_LIST_CLEAR(R3D_MOD_RENDER.modeStack);
 
     R3D_MOD_RENDER.groupCulled = false;
 
@@ -1359,6 +1362,86 @@ bool r3d_render_cluster_end(void)
     return true;
 }
 
+void r3d_render_mode_push(R3D_RenderMode mode)
+{
+    R3D_RenderMode effective = {0};
+
+    if (!R3D_LIST_EMPTY(R3D_MOD_RENDER.modeStack))
+    {
+        size_t index = R3D_LIST_LENGTH(R3D_MOD_RENDER.modeStack) - 1;
+        effective = R3D_LIST_GET(R3D_MOD_RENDER.modeStack, R3D_RenderMode, index);
+    }
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY)
+        effective.transparencyMode = mode.transparencyMode;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_BLEND)
+        effective.blendMode = mode.blendMode;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_CULL)
+        effective.cullMode = mode.cullMode;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH)
+        effective.depth = mode.depth;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
+        effective.stencil = mode.stencil;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_UNLIT)
+        effective.unlit = mode.unlit;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_PRIORITY)
+        effective.priority = mode.priority;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_SHADOW)
+        effective.shadowCastMode = mode.shadowCastMode;
+
+    effective.overrideMask |= mode.overrideMask;
+
+    R3D_LIST_PUSH(R3D_MOD_RENDER.modeStack, effective);
+}
+
+void r3d_render_mode_pop(void)
+{
+    if (R3D_LIST_EMPTY(R3D_MOD_RENDER.modeStack))
+    {
+        TraceLog(LOG_WARNING, "R3D: Render mode stack underflow");
+        return;
+    }
+
+    R3D_LIST_POP(R3D_MOD_RENDER.modeStack, NULL);
+}
+
+static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mode)
+{
+    R3D_Material* material = &call->mesh.material;
+    uint32_t mask = mode->overrideMask;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY)
+        material->transparencyMode = mode->transparencyMode;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_BLEND)
+        material->blendMode = mode->blendMode;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_CULL)
+        material->cullMode = mode->cullMode;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_DEPTH)
+        material->depth = mode->depth;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
+        material->stencil = mode->stencil;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_UNLIT)
+        material->unlit = mode->unlit;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_PRIORITY)
+        material->priority = mode->priority;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_SHADOW)
+        call->mesh.instance.shadowCastMode = mode->shadowCastMode;
+}
+
 void r3d_render_group_push(const r3d_render_group_t* group)
 {
     r3d_render_group_visibility_t visibility = {
@@ -1375,6 +1458,21 @@ void r3d_render_group_push(const r3d_render_group_t* group)
 
 void r3d_render_call_push(const r3d_render_call_t* call)
 {
+    r3d_render_call_t overriddenCall;
+
+    if (call->type == R3D_RENDER_CALL_MESH &&
+        !R3D_LIST_EMPTY(R3D_MOD_RENDER.modeStack))
+    {
+        size_t index = R3D_LIST_LENGTH(R3D_MOD_RENDER.modeStack) - 1;
+
+        const R3D_RenderMode* mode =
+            &R3D_LIST_GET(R3D_MOD_RENDER.modeStack, R3D_RenderMode, index);
+
+        overriddenCall = *call;
+        apply_render_mode(&overriddenCall, mode);
+        call = &overriddenCall;
+    }
+
     // Get group and their call indices
     int groupIndex = array_get_last_group_index();
     r3d_render_group_t* group = &R3D_LIST_GET(R3D_MOD_RENDER.groups, r3d_render_group_t, groupIndex);
