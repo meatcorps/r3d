@@ -7,6 +7,7 @@
  */
 
 #include <r3d/r3d_draw.h>
+#include <r3d/r3d_utils.h>
 #include <r3d_config.h>
 #include <raymath.h>
 #include <stddef.h>
@@ -355,25 +356,6 @@ void R3D_PushProbe(R3D_Probe probe, bool updateProbe)
     r3d_env_push_probe(&probe, updateProbe);
 }
 
-/**
- * Validate caller-provided animated culling bounds.
- *
- * Reject NaN, infinity and reversed dimensions.
- */
-static bool is_valid_animated_bounds(BoundingBox bounds)
-{
-    return
-        isfinite(bounds.min.x) &&
-        isfinite(bounds.min.y) &&
-        isfinite(bounds.min.z) &&
-        isfinite(bounds.max.x) &&
-        isfinite(bounds.max.y) &&
-        isfinite(bounds.max.z) &&
-        bounds.min.x <= bounds.max.x &&
-        bounds.min.y <= bounds.max.y &&
-        bounds.min.z <= bounds.max.z;
-}
-
 void R3D_DrawMesh(R3D_Mesh mesh, R3D_Material material, Vector3 position, float scale)
 {
     Matrix transform = r3d_matrix_st((Vector3) {scale, scale, scale}, position);
@@ -419,7 +401,7 @@ static bool draw_shape_key_mesh_internal(R3D_Mesh mesh, R3D_Material material, G
         return false;
     }
 
-    if (overrideBounds && !is_valid_animated_bounds(*overrideBounds))
+    if (overrideBounds && !R3D_IsBoundingBoxValid(*overrideBounds))
     {
         TraceLog(LOG_WARNING, "R3D: Invalid animated morph bounds");
         return false;
@@ -559,7 +541,7 @@ void R3D_DrawAnimatedMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_Ani
     if (!IS_MESH_VALID(mesh)) return;
     if (player.skinTexture == 0) return;
 
-    if (!is_valid_animated_bounds(bounds))
+    if (!R3D_IsBoundingBoxValid(bounds))
     {
         TraceLog(LOG_WARNING, "R3D: Invalid animated mesh bounds");
         return;
@@ -667,14 +649,15 @@ void R3D_DrawAnimatedModelEx(R3D_Model model, R3D_AnimationPlayer player, Vector
 
 void R3D_DrawAnimatedModelPro(R3D_Model model, R3D_AnimationPlayer player, Matrix transform)
 {
-    R3D_DrawAnimatedModelProBounds(model, player, model.aabb, transform);
+    BoundingBox bounds = model.hasAnimatedAabb ? model.animatedAabb : model.aabb;
+    R3D_DrawAnimatedModelProBounds(model, player, bounds, transform);
 }
 
 void R3D_DrawAnimatedModelProBounds(R3D_Model model, R3D_AnimationPlayer player, BoundingBox bounds, Matrix transform)
 {
     if (!model.meshes || !model.materials || !model.meshMaterials || model.meshCount <= 0) return;
 
-    if (!is_valid_animated_bounds(bounds))
+    if (!R3D_IsBoundingBoxValid(bounds))
     {
         TraceLog(LOG_WARNING, "R3D: Invalid animated model bounds");
         return;

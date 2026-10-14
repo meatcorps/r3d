@@ -82,6 +82,19 @@ typedef struct R3D_ShapeKeyGpu {
 } R3D_ShapeKeyGpu;
 
 /**
+ * @brief Calculates conservative GPU morph bounds without using OpenGL.
+ *
+ * Uses the immutable per-target displacement envelopes and
+ * the current shape-key instance weights.
+ *
+ * This calculation does not perform CPU vertex deformation.
+ * Negative and greater-than-one weights are supported.
+ *
+ * @return True on success. Result remains unchanged on failure.
+ */
+R3DAPI bool R3D_CalculateConservativeShapeKeyBounds(BoundingBox baseBounds, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox* result);
+
+/**
  * Uploads all imported morph targets once.
  * Requires an initialized R3D/OpenGL context.
  */

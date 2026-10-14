@@ -35,6 +35,7 @@ option(R3D_ASSIMP_VENDORED "Use vendored assimp from submodule" OFF)
 option(R3D_SUPPORT_ASSIMP "Build with Assimp importer support" ON)
 option(R3D_BUILD_EXAMPLES "Build the examples" ${R3D_IS_MAIN})
 option(R3D_BUILD_DOCS "Build the doxygen documentation" OFF)
+option(R3D_BUILD_TESTS "Build headless regression tests" ${R3D_IS_MAIN})
 
 # ========================================
 # Output Directories
@@ -536,4 +537,16 @@ endif()
 
 if(R3D_BUILD_EXAMPLES)
     include("${R3D_ROOT_PATH}/examples/CMakeLists.txt")
+endif()
+
+# ========================================
+# Headless Tests
+# ========================================
+
+if(R3D_BUILD_TESTS)
+    include(CTest)
+
+    if(BUILD_TESTING)
+        add_subdirectory(tests)
+    endif()
 endif()

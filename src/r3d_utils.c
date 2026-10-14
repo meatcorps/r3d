@@ -7,7 +7,7 @@
  */
 
 #include <r3d/r3d_utils.h>
-
+#include <math.h>
 #include "./modules/r3d_texture.h"
 #include "./modules/r3d_target.h"
 #include "./r3d_core_state.h"
@@ -15,6 +15,45 @@
 // ========================================
 // PUBLIC API
 // ========================================
+
+bool R3D_IsBoundingBoxValid(BoundingBox bounds)
+{
+    return isfinite(bounds.min.x) &&
+           isfinite(bounds.min.y) &&
+           isfinite(bounds.min.z) &&
+           isfinite(bounds.max.x) &&
+           isfinite(bounds.max.y) &&
+           isfinite(bounds.max.z) &&
+           bounds.min.x <= bounds.max.x &&
+           bounds.min.y <= bounds.max.y &&
+           bounds.min.z <= bounds.max.z;
+}
+
+bool R3D_ExpandBoundingBox(BoundingBox bounds, Vector3 padding, BoundingBox* result)
+{
+    if (!result || !R3D_IsBoundingBoxValid(bounds)) return false;
+
+    if (!isfinite(padding.x) || !isfinite(padding.y) || !isfinite(padding.z)) return false;
+    if (padding.x < 0.0f || padding.y < 0.0f || padding.z < 0.0f) return false;
+
+    BoundingBox expanded = {
+        .min = {
+            bounds.min.x - padding.x,
+            bounds.min.y - padding.y,
+            bounds.min.z - padding.z
+        },
+        .max = {
+            bounds.max.x + padding.x,
+            bounds.max.y + padding.y,
+            bounds.max.z + padding.z
+        }
+    };
+
+    if (!R3D_IsBoundingBoxValid(expanded)) return false;
+
+    *result = expanded;
+    return true;
+}
 
 Texture2D R3D_GetWhiteTexture(void)
 {

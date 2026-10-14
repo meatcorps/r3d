@@ -4,6 +4,7 @@
  */
 
 #include <r3d/r3d_shape_key.h>
+#include <r3d/r3d_utils.h>
 #include <r3d/r3d_vertex.h>
 #include <raymath.h>
 
@@ -28,6 +29,43 @@ static Vector3 normalize_or(Vector3 v, Vector3 fallback)
     }
 
     return Vector3Scale(v, 1.0f / sqrtf(lengthSq));
+}
+
+bool R3D_CalculateConservativeShapeKeyBounds(BoundingBox baseBounds, const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstance* instance, BoundingBox* result)
+{
+    if (!result || !gpu || !instance || !instance->source || !instance->weights) return false;
+    if (!R3D_IsBoundingBoxValid(baseBounds)) return false;
+    if (gpu->source != instance->source || gpu->keyCount <= 0 || gpu->keyCount != instance->source->keyCount) return false;
+    if (!gpu->minDeltas || !gpu->maxDeltas) return false;
+
+    BoundingBox bounds = baseBounds;
+
+    for (int k = 0; k < gpu->keyCount; k++)
+    {
+        const float weight = instance->weights[k];
+        const Vector3 minDelta = gpu->minDeltas[k];
+        const Vector3 maxDelta = gpu->maxDeltas[k];
+
+        if (!isfinite(weight) || !finite_vec3(minDelta) || !finite_vec3(maxDelta)) return false;
+        if (minDelta.x > maxDelta.x || minDelta.y > maxDelta.y || minDelta.z > maxDelta.z) return false;
+        if (weight == 0.0f) continue;
+
+        const Vector3 lower = weight >= 0.0f ? minDelta : maxDelta;
+        const Vector3 upper = weight >= 0.0f ? maxDelta : minDelta;
+
+        bounds.min.x += lower.x * weight;
+        bounds.min.y += lower.y * weight;
+        bounds.min.z += lower.z * weight;
+
+        bounds.max.x += upper.x * weight;
+        bounds.max.y += upper.y * weight;
+        bounds.max.z += upper.z * weight;
+    }
+
+    if (!R3D_IsBoundingBoxValid(bounds)) return false;
+
+    *result = bounds;
+    return true;
 }
 
 void R3D_UnloadShapeKeySet(R3D_ShapeKeySet set)

@@ -46,6 +46,8 @@ void R3D_UnloadShapeKeyGpu(R3D_ShapeKeyGpu gpu)
     free(gpu.maxDeltas);
 }
 
+
+
 R3D_ShapeKeyGpu R3D_LoadShapeKeyGpu(
     const R3D_ShapeKeySet* source)
 {

@@ -23,6 +23,38 @@ extern "C" {
 #endif
 
 // ----------------------------------------
+// UTILS: Bounding Box Functions
+// ----------------------------------------
+
+/**
+ * @brief Checks that an AABB contains finite coordinates
+ * and has correctly ordered minimum and maximum values.
+ */
+R3DAPI bool R3D_IsBoundingBoxValid(BoundingBox bounds);
+
+/**
+ * @brief Expands a local-space AABB on both sides of each axis.
+ *
+ * Padding must be finite and non-negative.
+ * The output remains unchanged if validation fails.
+ *
+ * @return True if the expanded bounds were calculated.
+ */
+R3DAPI bool R3D_ExpandBoundingBox(BoundingBox bounds, Vector3 padding, BoundingBox* result);
+
+/**
+ * @brief Validates a finite, correctly ordered bounding box.
+ */
+R3DAPI bool R3D_IsBoundingBoxValid(BoundingBox bounds);
+
+/**
+ * @brief Expands bounds by non-negative padding on each axis.
+ *
+ * The output is unchanged on failure.
+ */
+R3DAPI bool R3D_ExpandBoundingBox(BoundingBox bounds, Vector3 padding, BoundingBox* result);
+
+// ----------------------------------------
 // UTILS: Default Texture Retrieval Functions
 // ----------------------------------------
 

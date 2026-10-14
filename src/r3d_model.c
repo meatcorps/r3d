@@ -9,6 +9,7 @@
 #include <r3d/r3d_material.h>
 #include <r3d/r3d_skeleton.h>
 #include <r3d/r3d_model.h>
+#include <r3d/r3d_utils.h>
 #include <r3d/r3d_mesh.h>
 #include <r3d_config.h>
 
@@ -145,6 +146,24 @@ R3D_Model R3D_LoadModelFromImporter(const R3D_Importer* importer)
 #endif // R3D_SUPPORT_ASSIMP
 
     return model;
+}
+
+bool R3D_SetModelAnimatedBounds(R3D_Model* model, BoundingBox bounds)
+{
+    if (!model || !R3D_IsBoundingBoxValid(bounds)) return false;
+
+    model->animatedAabb = bounds;
+    model->hasAnimatedAabb = true;
+
+    return true;
+}
+
+void R3D_ClearModelAnimatedBounds(R3D_Model* model)
+{
+    if (!model) return;
+
+    model->animatedAabb = (BoundingBox){0};
+    model->hasAnimatedAabb = false;
 }
 
 void R3D_UnloadModel(R3D_Model model, bool unloadMaterials)

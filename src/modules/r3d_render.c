@@ -1577,48 +1577,20 @@ bool r3d_render_queue_morph(const R3D_ShapeKeyGpu* gpu, const R3D_ShapeKeyInstan
         return false;
     }
 
-    int activeCount = 0;
-    BoundingBox newBounds = *bounds;
+    BoundingBox newBounds = {0};
 
-    // ========================================
-    // VALIDATE AND CALCULATE BOUNDS
-    // ========================================
+    if (!R3D_CalculateConservativeShapeKeyBounds(*bounds, gpu, instance, &newBounds))
+    {
+        return false;
+    }
+
+    int activeCount = 0;
 
     for (int k = 0; k < gpu->keyCount; k++)
     {
-        float weight = instance->weights[k];
-
-        if (!isfinite(weight)) return false;
-        if (weight == 0.0f) continue;
-
+        if (instance->weights[k] == 0.0f) continue;
         if (activeCount == INT_MAX) return false;
         activeCount++;
-
-        Vector3 lower = weight >= 0.0f
-            ? gpu->minDeltas[k]
-            : gpu->maxDeltas[k];
-
-        Vector3 upper = weight >= 0.0f
-            ? gpu->maxDeltas[k]
-            : gpu->minDeltas[k];
-
-        newBounds.min.x += lower.x * weight;
-        newBounds.min.y += lower.y * weight;
-        newBounds.min.z += lower.z * weight;
-
-        newBounds.max.x += upper.x * weight;
-        newBounds.max.y += upper.y * weight;
-        newBounds.max.z += upper.z * weight;
-    }
-
-    if (!isfinite(newBounds.min.x) ||
-        !isfinite(newBounds.min.y) ||
-        !isfinite(newBounds.min.z) ||
-        !isfinite(newBounds.max.x) ||
-        !isfinite(newBounds.max.y) ||
-        !isfinite(newBounds.max.z))
-    {
-        return false;
     }
 
     if (activeCount > 0)

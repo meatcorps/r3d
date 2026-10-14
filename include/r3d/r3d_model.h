@@ -55,7 +55,10 @@ typedef struct R3D_Model {
     int meshCount;              ///< Number of meshes.
     int materialCount;          ///< Number of materials.
 
-    BoundingBox aabb;           ///< Axis-Aligned Bounding Box encompassing the whole model.
+    BoundingBox aabb;           ///< Imported model bounds.
+    BoundingBox animatedAabb;   ///< Optional conservative local-space bounds for animated drawing.
+    bool hasAnimatedAabb;       ///< Whether animatedAabb overrides the default animated culling bounds.
+
     R3D_Skeleton skeleton;      ///< Skeleton hierarchy and bind pose used for skinning (NULL if non-skinned).
 
 } R3D_Model;
@@ -151,6 +154,21 @@ R3DAPI R3D_Model R3D_LoadModelFromImporter(const R3D_Importer* importer);
  * Set to false if textures are still being used elsewhere to avoid freeing shared resources.
  */
 R3DAPI void R3D_UnloadModel(R3D_Model model, bool unloadMaterials);
+
+/**
+ * @brief Sets the default local-space animated culling bounds for a model.
+ *
+ * Does not modify the imported model.aabb.
+ * Existing animated model draw functions use these bounds automatically.
+ *
+ * @return False if the model pointer or bounds are invalid.
+ */
+R3DAPI bool R3D_SetModelAnimatedBounds(R3D_Model* model, BoundingBox bounds);
+
+/**
+ * @brief Clears configured animated bounds and restores model.aabb fallback.
+ */
+R3DAPI void R3D_ClearModelAnimatedBounds(R3D_Model* model);
 
 /**
  * @brief Returns the index of the mesh with the given name.
