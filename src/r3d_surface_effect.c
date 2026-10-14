@@ -33,6 +33,7 @@ static GLuint effectUniformBuffer = 0;
 static r3d_list_t* activeEffects = NULL;
 static r3d_list_t* capturedEffects = NULL;
 static r3d_list_t* parameterBytes = NULL;
+static r3d_list_t* samplerTextures = NULL;
 
 static r3d_list_t* effectPackedBytes = NULL;
 
@@ -45,6 +46,315 @@ static GLint effectBufferAlignment = 1;
 static bool effectRangeBound = false;
 static uint32_t effectBoundOffset = 0;
 static uint32_t effectBoundSize = 0;
+
+static bool effect_identifier_start(char c)
+{
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool effect_identifier_char(char c)
+{
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+static bool effect_add_symbol(R3D_SurfaceEffect* effect, const char* start, size_t length)
+{
+    if (length == 0 || length >= R3D_RSHADE_MAX_VAR_NAME_LENGTH)
+        return false;
+
+    for (int i = 0; i < effect->symbolCount; i++)
+    {
+        if (strlen(effect->symbols[i]) == length &&
+            strncmp(effect->symbols[i], start, length) == 0)
+        {
+            return true;
+        }
+    }
+
+    if (effect->symbolCount >= R3D_EFFECT_MAX_SYMBOLS)
+        return false;
+
+    char* destination = effect->symbols[effect->symbolCount++];
+    memcpy(destination, start, length);
+    destination[length] = '\0';
+
+    return true;
+}
+
+static bool effect_owns_identifier(const R3D_SurfaceEffect* effect, const char* start, size_t length)
+{
+    for (int i = 0; i < effect->uniformCount; i++)
+    {
+        const char* name = effect->uniforms.entries[i].name;
+
+        if (strlen(name) == length && strncmp(name, start, length) == 0)
+            return true;
+    }
+
+    for (int i = 0; i < effect->samplerCount; i++)
+    {
+        const char* name = effect->samplers[i].name;
+
+        if (strlen(name) == length && strncmp(name, start, length) == 0)
+            return true;
+    }
+
+    for (int i = 0; i < effect->varyingCount; i++)
+    {
+        const char* name = effect->varyings[i].name;
+
+        if (strlen(name) == length && strncmp(name, start, length) == 0)
+            return true;
+    }
+
+    for (int i = 0; i < effect->symbolCount; i++)
+    {
+        const char* name = effect->symbols[i];
+
+        if (strlen(name) == length && strncmp(name, start, length) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+static void effect_reset_declaration(char* previous, char* current, bool* assignment, bool* function)
+{
+    previous[0] = '\0';
+    current[0] = '\0';
+    *assignment = false;
+    *function = false;
+}
+
+/*
+ * Collect effect-owned top-level identifiers.
+ *
+ * Ray-Shade's uniforms, samplers, and varyings are already parsed
+ * separately. This discovers helper functions, global variables,
+ * struct type names, and preprocessor definitions.
+ */
+static bool effect_collect_symbols(R3D_SurfaceEffect* effect)
+{
+    const char* ptr = effect->globals;
+    int braces = 0;
+    int parentheses = 0;
+    bool assignment = false;
+    bool function = false;
+    bool expectStruct = false;
+
+    char previous[R3D_RSHADE_MAX_VAR_NAME_LENGTH] = {0};
+    char current[R3D_RSHADE_MAX_VAR_NAME_LENGTH] = {0};
+
+    while (*ptr)
+    {
+        r3d_rshade_skip_whitespace_and_comments(&ptr);
+        if (!*ptr) break;
+
+        if (*ptr == '#')
+        {
+            ptr++;
+            r3d_rshade_skip_whitespace(&ptr);
+
+            if (strncmp(ptr, "define", 6) == 0 && !effect_identifier_char(ptr[6]))
+            {
+                ptr += 6;
+                r3d_rshade_skip_whitespace(&ptr);
+
+                const char* start = ptr;
+
+                while (effect_identifier_char(*ptr)) ptr++;
+
+                if (!effect_add_symbol(effect, start, (size_t)(ptr - start)))
+                    return false;
+            }
+
+            r3d_rshade_skip_to_end_of_line(&ptr);
+            continue;
+        }
+
+        if (effect_identifier_start(*ptr))
+        {
+            const char* start = ptr;
+            while (effect_identifier_char(*ptr)) ptr++;
+
+            size_t length = (size_t)(ptr - start);
+
+            if (braces == 0 && parentheses == 0)
+            {
+                if (expectStruct)
+                {
+                    if (!effect_add_symbol(effect, start, length))
+                        return false;
+
+                    expectStruct = false;
+                }
+
+                if (length == 6 && strncmp(start, "struct", 6) == 0)
+                    expectStruct = true;
+
+                memcpy(previous, current, sizeof(previous));
+
+                if (length < sizeof(current))
+                {
+                    memcpy(current, start, length);
+                    current[length] = '\0';
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            continue;
+        }
+
+        if (*ptr == '(')
+        {
+            if (braces == 0 && parentheses == 0 && !assignment &&
+                previous[0] != '\0' && current[0] != '\0' &&
+                strcmp(current, "layout") != 0)
+            {
+                if (!effect_add_symbol(effect, current, strlen(current)))
+                    return false;
+
+                function = true;
+            }
+
+            parentheses++;
+        }
+        else if (*ptr == ')' && parentheses > 0)
+        {
+            parentheses--;
+        }
+        else if (*ptr == '=' && braces == 0 && parentheses == 0)
+        {
+            if (!assignment && !function && previous[0] && current[0])
+            {
+                if (!effect_add_symbol(effect, current, strlen(current)))
+                    return false;
+            }
+
+            assignment = true;
+        }
+        else if (*ptr == '{')
+        {
+            braces++;
+        }
+        else if (*ptr == '}')
+        {
+            if (braces > 0) braces--;
+
+            if (braces == 0)
+                effect_reset_declaration(previous, current, &assignment, &function);
+        }
+        else if (*ptr == ';' && braces == 0 && parentheses == 0)
+        {
+            if (!assignment && !function && previous[0] && current[0])
+            {
+                if (!effect_add_symbol(effect, current, strlen(current)))
+                    return false;
+            }
+
+            effect_reset_declaration(previous, current, &assignment, &function);
+        }
+
+        ptr++;
+    }
+
+    return true;
+}
+
+/*
+ * Copies GLSL while renaming effect-owned identifiers.
+ *
+ * Comments and strings remain untouched. Struct member access is
+ * also left alone; declarations belonging to the effect are renamed
+ * consistently across its global code and both entry functions.
+ */
+static void effect_write_renamed(r3d_rshade_writer_t* writer, const R3D_SurfaceEffect* effect, int slot, const char* source, size_t length)
+{
+    size_t i = 0;
+    char previousSignificant = '\0';
+
+    while (i < length && !writer->overflow)
+    {
+        if (i + 1 < length && source[i] == '/' && source[i + 1] == '/')
+        {
+            size_t start = i;
+            i += 2;
+
+            while (i < length && source[i] != '\n') i++;
+
+            r3d_rshade_writer_write(writer, source + start, i - start);
+            continue;
+        }
+
+        if (i + 1 < length && source[i] == '/' && source[i + 1] == '*')
+        {
+            size_t start = i;
+            i += 2;
+
+            while (i + 1 < length &&
+                   !(source[i] == '*' && source[i + 1] == '/'))
+            {
+                i++;
+            }
+
+            if (i + 1 < length) i += 2;
+            else i = length;
+
+            r3d_rshade_writer_write(writer, source + start, i - start);
+            continue;
+        }
+
+        if (source[i] == '"' || source[i] == '\'')
+        {
+            char quote = source[i];
+            size_t start = i++;
+
+            while (i < length)
+            {
+                if (source[i] == '\\' && i + 1 < length)
+                {
+                    i += 2;
+                    continue;
+                }
+
+                if (source[i++] == quote) break;
+            }
+
+            r3d_rshade_writer_write(writer, source + start, i - start);
+            continue;
+        }
+
+        if (effect_identifier_start(source[i]))
+        {
+            size_t start = i++;
+
+            while (i < length && effect_identifier_char(source[i]))
+                i++;
+
+            size_t wordLength = i - start;
+
+            if (previousSignificant != '.' &&
+                effect_owns_identifier(effect, source + start, wordLength))
+            {
+                r3d_rshade_writer_printf(writer, "r3dFx%d_", slot);
+            }
+
+            r3d_rshade_writer_write(writer, source + start, wordLength);
+            previousSignificant = 'i';
+            continue;
+        }
+
+        char c = source[i++];
+
+        r3d_rshade_writer_putc(writer, c);
+
+        if (!isspace((unsigned char)c))
+            previousSignificant = c;
+    }
+}
 
 R3D_SurfaceEffect* R3D_LoadSurfaceEffect(const char* filePath)
 {
@@ -64,78 +374,70 @@ R3D_SurfaceEffect* R3D_LoadSurfaceEffectFromMemory(const char* code)
     if (!code) return NULL;
 
     size_t length = strlen(code);
-    if (length == 0 || length >= R3D_MAX_SHADER_CODE_LENGTH) return NULL;
+
+    if (length == 0 || length >= R3D_MAX_SHADER_CODE_LENGTH)
+        return NULL;
 
     R3D_SurfaceEffect* effect = r3d_zalloc(sizeof(*effect));
-    memset(effect, 0, sizeof(*effect));
 
     effect->source = r3d_zalloc(length + 1);
     memcpy(effect->source, code, length + 1);
 
-    const char* ptr = effect->source;
-    r3d_rshade_sampler_t samplers[R3D_MAX_SHADER_SAMPLERS] = {0};
+    r3d_rshade_source_t parsed = {0};
 
-    int samplerCount = 0;
-    int uniformCount = 0;
-    int currentOffset = 0;
-
-    while (*ptr)
+    if (!r3d_rshade_parse_source(effect->source, &parsed))
     {
-        r3d_rshade_skip_whitespace_and_comments(&ptr);
-        if (!*ptr) break;
-
-        if (r3d_rshade_match_keyword(ptr, "uniform", 7))
-        {
-            ptr += 7;
-
-            r3d_rshade_parse_uniform(
-                &ptr,
-                samplers,
-                &effect->uniforms,
-                &samplerCount,
-                &uniformCount,
-                &currentOffset,
-                R3D_MAX_SHADER_SAMPLERS,
-                R3D_MAX_SHADER_UNIFORMS
-            );
-
-            continue;
-        }
-
-        r3d_rshade_parsed_function_t* entry =
-            r3d_rshade_check_shader_entry(
-                ptr,
-                &effect->vertex,
-                &effect->fragment
-            );
-
-        if (entry && !entry->bodyStart)
-        {
-            r3d_rshade_skip_to_brace(&ptr);
-
-            if (*ptr == '{')
-            {
-                entry->bodyStart = ptr;
-                r3d_rshade_skip_to_matching_brace(&ptr);
-                entry->bodyEnd = ptr;
-                continue;
-            }
-        }
-
-        /* Other declarations remain in the original source.
-         * Shader source validation and composition come next. */
-        ptr++;
-    }
-
-    if (!effect->vertex.bodyStart && !effect->fragment.bodyStart)
-    {
-        TraceLog(LOG_WARNING, "R3D: Surface effect has no vertex or fragment hook");
+        TraceLog(LOG_ERROR, "R3D: Invalid surface effect Ray-Shade source");
         R3D_UnloadSurfaceEffect(effect);
         return NULL;
     }
 
-    effect->uniformCount = uniformCount;
-    effect->uniforms.bufferSize = currentOffset;
+    memcpy(&effect->uniforms, &parsed.uniforms, sizeof(parsed.uniforms));
+    memcpy(effect->samplers, parsed.samplers, sizeof(parsed.samplers));
+    memcpy(effect->varyings, parsed.varyings, sizeof(parsed.varyings));
+
+    effect->uniformCount = parsed.uniformCount;
+    effect->samplerCount = parsed.samplerCount;
+    effect->varyingCount = parsed.varyingCount;
+
+    effect->uniforms.bufferSize = parsed.uniformSize;
+
+    effect->vertex = parsed.vertex;
+    effect->fragment = parsed.fragment;
+
+    // Preserve all global Ray-Shade code except metadata declarations
+    // and the two entry functions. It will be namespaced during composition.
+    effect->globals = r3d_zalloc(length + 1);
+
+    r3d_rshade_writer_t writer = {
+        .ptr = effect->globals,
+        .remaining = length + 1,
+        .overflow = false
+    };
+
+    r3d_rshade_copy_global_code(
+        &writer,
+        effect->source,
+        true,
+        &effect->vertex,
+        &effect->fragment
+    );
+
+    if (writer.overflow)
+    {
+        TraceLog(LOG_ERROR, "R3D: Failed to extract effect global source");
+        R3D_UnloadSurfaceEffect(effect);
+        return NULL;
+    }
+
+    *writer.ptr = '\0';
+
+    if (!effect_collect_symbols(effect))
+    {
+        TraceLog(LOG_ERROR, "R3D: Failed to namespace surface effect symbols");
+        R3D_UnloadSurfaceEffect(effect);
+        return NULL;
+    }
 
     return effect;
 }
@@ -146,6 +448,7 @@ void R3D_UnloadSurfaceEffect(R3D_SurfaceEffect* effect)
 
     r3d_effect_invalidate_resource(effect);
 
+    r3d_free(effect->globals);
     r3d_free(effect->source);
     r3d_free(effect);
 }
@@ -173,6 +476,22 @@ void R3D_SetSurfaceEffectUniform(R3D_SurfaceEffect* effect, const char* name, co
     TraceLog(LOG_WARNING, "R3D: Unknown surface effect uniform '%s'", name);
 }
 
+void R3D_SetSurfaceEffectSampler(R3D_SurfaceEffect* effect, const char* name, Texture texture)
+{
+    if (!effect || !name) return;
+
+    for (int i = 0; i < effect->samplerCount; i++)
+    {
+        if (strcmp(effect->samplers[i].name, name) == 0)
+        {
+            effect->samplers[i].texture = texture.id;
+            return;
+        }
+    }
+
+    TraceLog(LOG_WARNING, "R3D: Unknown surface effect sampler '%s'", name);
+}
+
 void R3D_PushSurfaceEffect(R3D_SurfaceEffect* effect)
 {
     r3d_effect_push(effect);
@@ -188,6 +507,7 @@ void r3d_effect_init(void)
     activeEffects = R3D_LIST_CREATE(r3d_effect_snapshot_t, 8);
     capturedEffects = R3D_LIST_CREATE(r3d_effect_snapshot_t, 64);
     parameterBytes = R3D_LIST_CREATE(uint8_t, 1024);
+    samplerTextures = R3D_LIST_CREATE(GLuint, 64);
     effectPackedBytes = R3D_LIST_CREATE(uint8_t, 4096);
     effectVariants = R3D_LIST_CREATE(r3d_effect_variant_t, 8);
 
@@ -224,11 +544,13 @@ void r3d_effect_quit(void)
     if (activeEffects) R3D_LIST_DESTROY(activeEffects);
     if (capturedEffects) R3D_LIST_DESTROY(capturedEffects);
     if (parameterBytes) R3D_LIST_DESTROY(parameterBytes);
+    if (samplerTextures) R3D_LIST_DESTROY(samplerTextures);
     if (effectPackedBytes) R3D_LIST_DESTROY(effectPackedBytes);
 
     activeEffects = NULL;
     capturedEffects = NULL;
     parameterBytes = NULL;
+    samplerTextures = NULL;
     effectPackedBytes = NULL;
     effectVariants = NULL;
     effectUniformBuffer = 0;
@@ -242,6 +564,7 @@ void r3d_effect_clear(void)
     if (activeEffects) R3D_LIST_CLEAR(activeEffects);
     if (capturedEffects) R3D_LIST_CLEAR(capturedEffects);
     if (parameterBytes) R3D_LIST_CLEAR(parameterBytes);
+    if (samplerTextures) R3D_LIST_CLEAR(samplerTextures);
     if (effectPackedBytes) R3D_LIST_CLEAR(effectPackedBytes);
 
     captureCacheValid = false;
@@ -255,10 +578,23 @@ bool r3d_effect_has_active(void)
 
 void r3d_effect_push(R3D_SurfaceEffect* effect)
 {
-    if (!effect || !activeEffects || !parameterBytes) return;
+    if (!effect || !activeEffects || !parameterBytes || !samplerTextures)
+    {
+        TraceLog(LOG_ERROR, "R3D: Surface effect state is not initialized");
+        return;
+    }
 
     size_t offset = R3D_LIST_LENGTH(parameterBytes);
     size_t size = (size_t)effect->uniforms.bufferSize;
+
+    size_t samplerOffset = R3D_LIST_LENGTH(samplerTextures);
+
+    if (samplerOffset > UINT32_MAX ||
+        (size_t)effect->samplerCount > UINT32_MAX - samplerOffset)
+    {
+        TraceLog(LOG_ERROR, "R3D: Surface effect sampler snapshot limit reached");
+        return;
+    }
 
     if (offset > UINT32_MAX || size > UINT32_MAX - offset)
     {
@@ -269,7 +605,8 @@ void r3d_effect_push(R3D_SurfaceEffect* effect)
     r3d_effect_snapshot_t snapshot = {
         .effect = effect,
         .parameterOffset = (uint32_t)offset,
-        .parameterSize = (uint32_t)size
+        .parameterSize = (uint32_t)size,
+        .samplerOffset = (uint32_t)samplerOffset
     };
 
     if (size > 0)
@@ -279,6 +616,11 @@ void r3d_effect_push(R3D_SurfaceEffect* effect)
             effect->uniforms.buffer,
             size
         );
+    }
+
+    for (int i = 0; i < effect->samplerCount; i++)
+    {
+        R3D_LIST_PUSH(samplerTextures, effect->samplers[i].texture);
     }
 
     R3D_LIST_PUSH(activeEffects, snapshot);
@@ -506,16 +848,47 @@ static r3d_effect_variant_t* effect_find_variant(R3D_SurfaceShader* base, int fi
     return NULL;
 }
 
-static void effect_write_uniform_macros(r3d_rshade_writer_t* writer, const R3D_SurfaceEffect* effect, int slot, bool define)
+static const char* effect_sampler_type(GLenum target)
 {
-    for (int i = 0; i < effect->uniformCount; i++)
+    switch (target)
     {
-        const char* name = effect->uniforms.entries[i].name;
+        case GL_TEXTURE_1D:       return "sampler1D";
+        case GL_TEXTURE_2D:       return "sampler2D";
+        case GL_TEXTURE_3D:       return "sampler3D";
+        case GL_TEXTURE_CUBE_MAP: return "samplerCube";
+        default:                 return NULL;
+    }
+}
 
-        if (define)
-            r3d_rshade_writer_printf(writer, "#define %s r3dFx%d_%s\n", name, slot, name);
+static void effect_write_varyings(r3d_rshade_writer_t* writer, const R3D_SurfaceEffect* effect, int slot, const char* direction)
+{
+    for (int i = 0; i < effect->varyingCount; i++)
+    {
+        const r3d_rshade_varying_t* varying = &effect->varyings[i];
+
+        if (varying->qualifier[0])
+        {
+            r3d_rshade_writer_printf(
+                writer,
+                "%s %s %s r3dFx%d_%s;\n",
+                varying->qualifier,
+                direction,
+                varying->type,
+                slot,
+                varying->name
+            );
+        }
         else
-            r3d_rshade_writer_printf(writer, "#undef %s\n", name);
+        {
+            r3d_rshade_writer_printf(
+                writer,
+                "%s %s r3dFx%d_%s;\n",
+                direction,
+                varying->type,
+                slot,
+                varying->name
+            );
+        }
     }
 }
 
@@ -526,8 +899,6 @@ static void effect_write_function(r3d_rshade_writer_t* writer, const R3D_Surface
 
     if (!function->bodyStart) return;
 
-    effect_write_uniform_macros(writer, effect, slot, true);
-
     r3d_rshade_writer_printf(
         writer,
         "void r3dFx%d_%s() ",
@@ -535,21 +906,94 @@ static void effect_write_function(r3d_rshade_writer_t* writer, const R3D_Surface
         vertex ? "vertex" : "fragment"
     );
 
-    r3d_rshade_writer_write(
+    effect_write_renamed(
         writer,
+        effect,
+        slot,
         function->bodyStart,
         (size_t)(function->bodyEnd - function->bodyStart)
     );
 
     r3d_rshade_writer_putc(writer, '\n');
-
-    effect_write_uniform_macros(writer, effect, slot, false);
 }
 
 static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShader* base)
 {
+    int totalSamplers = 0;
+
+    if (base)
+    {
+        while (totalSamplers < R3D_MAX_SHADER_SAMPLERS &&
+               base->data.samplers[totalSamplers].name[0])
+        {
+            totalSamplers++;
+        }
+    }
+
+    int baseSamplerCount = totalSamplers;
+
+    for (int slot = 0; slot < variant->count; slot++)
+    {
+        totalSamplers += variant->effects[slot]->samplerCount;
+    }
+
+    if (totalSamplers > R3D_MAX_SHADER_SAMPLERS)
+    {
+        TraceLog(
+            LOG_ERROR,
+            "R3D: Composed shader requires %d samplers, maximum is %d",
+            totalSamplers,
+            R3D_MAX_SHADER_SAMPLERS
+        );
+
+        return false;
+    }
+
     R3D_SurfaceShader* shader = r3d_shader_custom_alloc();
     if (!shader) return false;
+
+    // Existing material samplers occupy the first slots.
+    if (base)
+    {
+        memcpy(
+            shader->data.samplers,
+            base->data.samplers,
+            sizeof(shader->data.samplers)
+        );
+    }
+
+    // Effects use the remaining custom sampler slots.
+    // Their GLSL identifiers are namespaced per effect occurrence.
+    int samplerIndex = baseSamplerCount;
+
+    for (int slot = 0; slot < variant->count; slot++)
+    {
+        const R3D_SurfaceEffect* effect = variant->effects[slot];
+
+        for (int i = 0; i < effect->samplerCount; i++)
+        {
+            r3d_rshade_sampler_t* sampler =
+                &shader->data.samplers[samplerIndex++];
+
+            int written = snprintf(
+                sampler->name,
+                sizeof(sampler->name),
+                "r3dFx%d_%s",
+                slot,
+                effect->samplers[i].name
+            );
+
+            if (written < 0 || (size_t)written >= sizeof(sampler->name))
+            {
+                TraceLog(LOG_ERROR, "R3D: Composed sampler name too long");
+                r3d_shader_custom_free(shader);
+                return false;
+            }
+
+            sampler->target = effect->samplers[i].target;
+            sampler->texture = 0;
+        }
+    }
 
     r3d_rshade_writer_t writer = {
         .ptr = shader->program->userCode,
@@ -561,14 +1005,21 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
     bool baseVertex = baseCode && strstr(baseCode, "void vertex()");
     bool baseFragment = baseCode && strstr(baseCode, "void fragment()");
 
+    // Preserve the original material shader and its UserBlock.
     if (baseCode)
     {
         r3d_rshade_writer_printf(&writer, "#define vertex r3dBaseVertex\n");
         r3d_rshade_writer_printf(&writer, "#define fragment r3dBaseFragment\n");
+
         r3d_rshade_writer_write(&writer, baseCode, strlen(baseCode));
-        r3d_rshade_writer_printf(&writer, "\n#undef vertex\n#undef fragment\n");
+
+        r3d_rshade_writer_printf(
+            &writer,
+            "\n#undef vertex\n#undef fragment\n"
+        );
     }
 
+    // Create the independent EffectBlock.
     int uniformOffset = 0;
     bool hasUniforms = false;
 
@@ -580,7 +1031,10 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
 
     if (hasUniforms)
     {
-        r3d_rshade_writer_printf(&writer, "\nlayout(std140) uniform EffectBlock {\n");
+        r3d_rshade_writer_printf(
+            &writer,
+            "\nlayout(std140) uniform EffectBlock {\n"
+        );
 
         for (int slot = 0; slot < variant->count; slot++)
         {
@@ -588,12 +1042,20 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
 
             for (int i = 0; i < effect->uniformCount; i++)
             {
-                const r3d_rshade_uniform_t* uniform = &effect->uniforms.entries[i];
+                const r3d_rshade_uniform_t* uniform =
+                    &effect->uniforms.entries[i];
 
                 uniformOffset = r3d_align_offset(
                     uniformOffset,
                     r3d_rshade_get_std140_alignment(uniform->size)
                 );
+
+                if (uniformOffset > R3D_EFFECT_BLOCK_LIMIT - uniform->size)
+                {
+                    TraceLog(LOG_ERROR, "R3D: EffectBlock size limit exceeded");
+                    r3d_shader_custom_free(shader);
+                    return false;
+                }
 
                 uniformOffset += uniform->size;
 
@@ -614,17 +1076,78 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
 
     if (variant->uniformSize > R3D_EFFECT_BLOCK_LIMIT)
     {
-        TraceLog(LOG_ERROR, "R3D: Composed effect uniform block exceeds 16 KB");
+        TraceLog(LOG_ERROR, "R3D: EffectBlock exceeds 16 KB");
         r3d_shader_custom_free(shader);
         return false;
     }
 
+    // Declare all effect-owned texture samplers outside the UBO.
+    for (int slot = 0; slot < variant->count; slot++)
+    {
+        const R3D_SurfaceEffect* effect = variant->effects[slot];
+
+        for (int i = 0; i < effect->samplerCount; i++)
+        {
+            const char* type =
+                effect_sampler_type(effect->samplers[i].target);
+
+            if (!type)
+            {
+                TraceLog(LOG_ERROR, "R3D: Unsupported effect sampler type");
+                r3d_shader_custom_free(shader);
+                return false;
+            }
+
+            r3d_rshade_writer_printf(
+                &writer,
+                "uniform %s r3dFx%d_%s;\n",
+                type,
+                slot,
+                effect->samplers[i].name
+            );
+        }
+    }
+
+    // Write each effect's varyings, global code and helpers.
+    // Shared identifiers are rewritten to unique slot-qualified names.
+    for (int slot = 0; slot < variant->count; slot++)
+    {
+        const R3D_SurfaceEffect* effect = variant->effects[slot];
+
+        r3d_rshade_writer_printf(&writer, "\n#ifdef STAGE_VERT\n");
+        effect_write_varyings(&writer, effect, slot, "out");
+        r3d_rshade_writer_printf(&writer, "#endif\n");
+
+        r3d_rshade_writer_printf(&writer, "#ifdef STAGE_FRAG\n");
+        effect_write_varyings(&writer, effect, slot, "in");
+        r3d_rshade_writer_printf(&writer, "#endif\n");
+
+        effect_write_renamed(
+            &writer,
+            effect,
+            slot,
+            effect->globals,
+            strlen(effect->globals)
+        );
+
+        r3d_rshade_writer_putc(&writer, '\n');
+    }
+
+    // The original material vertex hook retains its original timing.
+    // Temporary effect vertex hooks run after GPU morphing.
     r3d_rshade_writer_printf(&writer, "\n#ifdef STAGE_VERT\n");
 
     for (int slot = 0; slot < variant->count; slot++)
-        effect_write_function(&writer, variant->effects[slot], slot, true);
+    {
+        effect_write_function(
+            &writer,
+            variant->effects[slot],
+            slot,
+            true
+        );
+    }
 
-    r3d_rshade_writer_printf(&writer, "\nvoid vertex() {\n");
+    r3d_rshade_writer_printf(&writer, "void vertex() {\n");
 
     if (baseVertex)
         r3d_rshade_writer_printf(&writer, "    r3dBaseVertex();\n");
@@ -633,24 +1156,39 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
 
     r3d_rshade_writer_printf(
         &writer,
-        "\n#define R3D_SURFACE_EFFECT_POST_MORPH\n"
+        "#define R3D_SURFACE_EFFECT_POST_MORPH\n"
         "void r3dEffectPostMorph() {\n"
     );
 
     for (int slot = 0; slot < variant->count; slot++)
     {
         if (variant->effects[slot]->vertex.bodyStart)
-            r3d_rshade_writer_printf(&writer, "    r3dFx%d_vertex();\n", slot);
+        {
+            r3d_rshade_writer_printf(
+                &writer,
+                "    r3dFx%d_vertex();\n",
+                slot
+            );
+        }
     }
 
     r3d_rshade_writer_printf(&writer, "}\n#endif\n");
 
+    // Fragment effects execute after the material's fragment hook.
+    // They therefore modify the material output in Push order.
     r3d_rshade_writer_printf(&writer, "\n#ifdef STAGE_FRAG\n");
 
     for (int slot = 0; slot < variant->count; slot++)
-        effect_write_function(&writer, variant->effects[slot], slot, false);
+    {
+        effect_write_function(
+            &writer,
+            variant->effects[slot],
+            slot,
+            false
+        );
+    }
 
-    r3d_rshade_writer_printf(&writer, "\nvoid fragment() {\n");
+    r3d_rshade_writer_printf(&writer, "void fragment() {\n");
 
     if (baseFragment)
         r3d_rshade_writer_printf(&writer, "    r3dBaseFragment();\n");
@@ -658,28 +1196,48 @@ static bool effect_build_variant(r3d_effect_variant_t* variant, R3D_SurfaceShade
     for (int slot = 0; slot < variant->count; slot++)
     {
         if (variant->effects[slot]->fragment.bodyStart)
-            r3d_rshade_writer_printf(&writer, "    r3dFx%d_fragment();\n", slot);
+        {
+            r3d_rshade_writer_printf(
+                &writer,
+                "    r3dFx%d_fragment();\n",
+                slot
+            );
+        }
     }
 
     r3d_rshade_writer_printf(&writer, "}\n#endif\n");
 
     if (writer.overflow)
     {
-        TraceLog(LOG_ERROR, "R3D: Composed surface shader source exceeds limit");
+        TraceLog(LOG_ERROR, "R3D: Composed Ray-Shade source exceeds size limit");
         r3d_shader_custom_free(shader);
         return false;
     }
 
     *writer.ptr = '\0';
 
+    // Original material shader uniforms retain the existing UserBlock.
     if (base)
     {
-        memcpy(shader->data.samplers, base->data.samplers, sizeof(shader->data.samplers));
-        memcpy(shader->data.uniforms.entries, base->data.uniforms.entries, sizeof(shader->data.uniforms.entries));
-        memcpy(shader->data.uniforms.buffer, base->data.uniforms.buffer, sizeof(shader->data.uniforms.buffer));
+        memcpy(
+            shader->data.uniforms.entries,
+            base->data.uniforms.entries,
+            sizeof(shader->data.uniforms.entries)
+        );
+
+        memcpy(
+            shader->data.uniforms.buffer,
+            base->data.uniforms.buffer,
+            sizeof(shader->data.uniforms.buffer)
+        );
 
         if (base->data.uniforms.bufferSize > 0)
-            r3d_shader_custom_init_uniforms(shader, base->data.uniforms.bufferSize);
+        {
+            r3d_shader_custom_init_uniforms(
+                shader,
+                base->data.uniforms.bufferSize
+            );
+        }
     }
 
     variant->shader = shader;
@@ -704,12 +1262,46 @@ static void effect_sync_base_state(R3D_SurfaceShader* composed, R3D_SurfaceShade
             target->dirty = true;
         }
     }
+}
 
-    memcpy(
-        composed->data.samplers,
-        base->data.samplers,
-        sizeof(base->data.samplers)
-    );
+static void effect_sync_sampler_state(R3D_SurfaceShader* composed, R3D_SurfaceShader* base, int first, int count)
+{
+    if (!composed) return;
+
+    int destination = 0;
+
+    // Material sampler values retain their existing live semantics.
+    if (base)
+    {
+        for (int i = 0;
+             i < R3D_MAX_SHADER_SAMPLERS &&
+             base->data.samplers[i].name[0];
+             i++)
+        {
+            composed->data.samplers[destination++].texture =
+                base->data.samplers[i].texture;
+        }
+    }
+
+    // Effect sampler values are immutable submission snapshots.
+    for (int slot = 0; slot < count; slot++)
+    {
+        const r3d_effect_snapshot_t* snapshot =
+            &R3D_LIST_GET(capturedEffects, r3d_effect_snapshot_t, first + slot);
+
+        const R3D_SurfaceEffect* effect = snapshot->effect;
+
+        for (int i = 0; i < effect->samplerCount; i++)
+        {
+            GLuint texture = R3D_LIST_GET(
+                samplerTextures,
+                GLuint,
+                (size_t)snapshot->samplerOffset + (size_t)i
+            );
+
+            composed->data.samplers[destination++].texture = texture;
+        }
+    }
 }
 
 R3D_SurfaceShader* r3d_effect_resolve_shader(R3D_SurfaceShader* base, int first, int count)
@@ -720,7 +1312,12 @@ R3D_SurfaceShader* r3d_effect_resolve_shader(R3D_SurfaceShader* base, int first,
 
     if (existing)
     {
+        if (!existing->shader)
+            return base;
+
         effect_sync_base_state(existing->shader, base);
+        effect_sync_sampler_state(existing->shader, base, first, count);
+
         return existing->shader;
     }
 
@@ -739,13 +1336,16 @@ R3D_SurfaceShader* r3d_effect_resolve_shader(R3D_SurfaceShader* base, int first,
 
     if (!effect_build_variant(&variant, base))
     {
-        r3d_free(variant.effects);
+        // Cache failed combinations too, to avoid retrying every draw.
+        // A diagnostic has already been emitted by the composer.
+        R3D_LIST_PUSH(effectVariants, variant);
         return base;
     }
 
     R3D_LIST_PUSH(effectVariants, variant);
 
     effect_sync_base_state(variant.shader, base);
+    effect_sync_sampler_state(variant.shader, base, first, count);
 
     return variant.shader;
 }

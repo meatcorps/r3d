@@ -10,15 +10,27 @@
 
 #include "../common/r3d_rshade.h"
 
-/* Loaded effect resource. */
+#define R3D_EFFECT_MAX_SYMBOLS 64
+
+/* Loaded Ray-Shade effect resource. */
 struct R3D_SurfaceEffect {
     char* source;
+    char* globals;
 
     r3d_rshade_uniform_buffer_t uniforms;
+    r3d_rshade_sampler_t samplers[R3D_MAX_SHADER_SAMPLERS];
+    r3d_rshade_varying_t varyings[R3D_RSHADE_MAX_VARYINGS];
+
     int uniformCount;
+    int samplerCount;
+    int varyingCount;
 
     r3d_rshade_parsed_function_t vertex;
     r3d_rshade_parsed_function_t fragment;
+
+    /* Effect-owned globals, helpers, types, and macros. */
+    char symbols[R3D_EFFECT_MAX_SYMBOLS][R3D_RSHADE_MAX_VAR_NAME_LENGTH];
+    int symbolCount;
 };
 
 /* Immutable reference to parameters copied into the frame's byte storage. */
@@ -26,6 +38,7 @@ typedef struct r3d_effect_snapshot {
     R3D_SurfaceEffect* effect;
     uint32_t parameterOffset;
     uint32_t parameterSize;
+    uint32_t samplerOffset;
 
     // Only used by the first snapshot in a captured scope.
     uint32_t frameOffset;

@@ -4,6 +4,7 @@
 #define R3D_SURFACE_EFFECT_H
 
 #include "./r3d_platform.h"
+#include <raylib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,8 @@ extern "C" {
 
     /* Change the default value used by subsequent Push calls. */
     R3DAPI void R3D_SetSurfaceEffectUniform(R3D_SurfaceEffect* effect, const char* name, const void* value);
+    /* Sets the texture captured by subsequent Push calls. */
+    R3DAPI void R3D_SetSurfaceEffectSampler(R3D_SurfaceEffect* effect, const char* name, Texture texture);
 
     /* Push captures the effect's current parameter values. */
     R3DAPI void R3D_PushSurfaceEffect(R3D_SurfaceEffect* effect);

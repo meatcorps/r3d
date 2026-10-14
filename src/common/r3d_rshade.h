@@ -523,22 +523,189 @@ static inline bool r3d_rshade_parse_uniform(const char** ptr,
     return true;
 }
 
-/* Check if current position is vertex() or fragment() function entry point */
-static inline r3d_rshade_parsed_function_t* r3d_rshade_check_shader_entry(const char* ptr,
-    r3d_rshade_parsed_function_t* vertexFunc, r3d_rshade_parsed_function_t* fragmentFunc)
+/* Match exact Ray-Shade entry points, not helper function prefixes. */
+static inline r3d_rshade_parsed_function_t* r3d_rshade_check_shader_entry(const char* ptr, r3d_rshade_parsed_function_t* vertexFunc, r3d_rshade_parsed_function_t* fragmentFunc)
 {
-    if (!r3d_rshade_match_keyword(ptr, "void", 4))
+    if (!r3d_rshade_match_keyword(ptr, "void", 4)) return NULL;
+
+    const char* p = ptr + 4;
+    r3d_rshade_skip_whitespace(&p);
+
+    r3d_rshade_parsed_function_t* result = NULL;
+
+    if (strncmp(p, "vertex", 6) == 0 &&
+        !isalnum((unsigned char)p[6]) && p[6] != '_')
     {
-        return NULL;
+        result = vertexFunc;
+        p += 6;
+    }
+    else if (strncmp(p, "fragment", 8) == 0 &&
+             !isalnum((unsigned char)p[8]) && p[8] != '_')
+    {
+        result = fragmentFunc;
+        p += 8;
     }
 
-    const char* ahead = ptr + 4;
-    while (*ahead && IS_SPACE(*ahead)) ahead++;
+    if (!result) return NULL;
 
-    if (strncmp(ahead, "vertex", 6) == 0)   return vertexFunc;
-    if (strncmp(ahead, "fragment", 8) == 0) return fragmentFunc;
+    r3d_rshade_skip_whitespace(&p);
+    if (*p++ != '(') return NULL;
 
-    return NULL;
+    r3d_rshade_skip_whitespace(&p);
+    if (*p != ')') return NULL;
+
+    return result;
+}
+
+#define R3D_RSHADE_MAX_VARYINGS 32
+
+typedef struct {
+    r3d_rshade_sampler_t samplers[R3D_MAX_SHADER_SAMPLERS];
+    r3d_rshade_uniform_buffer_t uniforms;
+    r3d_rshade_varying_t varyings[R3D_RSHADE_MAX_VARYINGS];
+    r3d_rshade_parsed_function_t vertex;
+    r3d_rshade_parsed_function_t fragment;
+    int samplerCount;
+    int uniformCount;
+    int varyingCount;
+    int uniformSize;
+} r3d_rshade_source_t;
+
+static inline bool r3d_rshade_parse_source(const char* code, r3d_rshade_source_t* result)
+{
+    if (!code || !result) return false;
+
+    memset(result, 0, sizeof(*result));
+
+    const char* ptr = code;
+
+    while (*ptr)
+    {
+        r3d_rshade_skip_whitespace_and_comments(&ptr);
+        if (!*ptr) break;
+
+        if (strncmp(ptr, "#pragma", 7) == 0 &&
+            (IS_SPACE(ptr[7]) || ptr[7] == '\0'))
+        {
+            r3d_rshade_skip_to_end_of_line(&ptr);
+            continue;
+        }
+
+        if (r3d_rshade_match_keyword(ptr, "uniform", 7))
+        {
+            ptr += 7;
+
+            int oldUniformCount = result->uniformCount;
+            int oldSamplerCount = result->samplerCount;
+
+            bool ok = r3d_rshade_parse_uniform(
+                &ptr,
+                result->samplers,
+                &result->uniforms,
+                &result->samplerCount,
+                &result->uniformCount,
+                &result->uniformSize,
+                R3D_MAX_SHADER_SAMPLERS,
+                R3D_MAX_SHADER_UNIFORMS
+            );
+
+            if (!ok ||
+                (oldUniformCount == result->uniformCount &&
+                 oldSamplerCount == result->samplerCount))
+            {
+                return false;
+            }
+
+            if (result->uniformCount > oldUniformCount)
+            {
+                const char* name =
+                    result->uniforms.entries[oldUniformCount].name;
+
+                for (int i = 0; i < oldUniformCount; i++)
+                {
+                    if (strcmp(name, result->uniforms.entries[i].name) == 0)
+                        return false;
+                }
+
+                for (int i = 0; i < result->samplerCount; i++)
+                {
+                    if (strcmp(name, result->samplers[i].name) == 0)
+                        return false;
+                }
+            }
+            else
+            {
+                const char* name =
+                    result->samplers[oldSamplerCount].name;
+
+                for (int i = 0; i < oldSamplerCount; i++)
+                {
+                    if (strcmp(name, result->samplers[i].name) == 0)
+                        return false;
+                }
+
+                for (int i = 0; i < result->uniformCount; i++)
+                {
+                    if (strcmp(name, result->uniforms.entries[i].name) == 0)
+                        return false;
+                }
+            }
+
+            continue;
+        }
+
+        if (r3d_rshade_match_varying_keyword(ptr))
+        {
+            if (result->varyingCount >= R3D_RSHADE_MAX_VARYINGS)
+                return false;
+
+            r3d_rshade_varying_t* varying =
+                &result->varyings[result->varyingCount];
+
+            if (!r3d_rshade_parse_varying(&ptr, varying))
+                return false;
+
+            for (int i = 0; i < result->varyingCount; i++)
+            {
+                if (strcmp(varying->name, result->varyings[i].name) == 0)
+                    return false;
+            }
+
+            result->varyingCount++;
+            continue;
+        }
+
+        r3d_rshade_parsed_function_t* entry =
+            r3d_rshade_check_shader_entry(
+                ptr,
+                &result->vertex,
+                &result->fragment
+            );
+
+        if (entry)
+        {
+            if (entry->bodyStart) return false;
+
+            r3d_rshade_skip_to_brace(&ptr);
+            if (*ptr != '{') return false;
+
+            entry->bodyStart = ptr;
+            r3d_rshade_skip_to_matching_brace(&ptr);
+            entry->bodyEnd = ptr;
+
+            if (entry->bodyEnd == entry->bodyStart ||
+                entry->bodyEnd[-1] != '}')
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        ptr++;
+    }
+
+    return result->vertex.bodyStart || result->fragment.bodyStart;
 }
 
 /* Check if line should be skipped during global code copy */

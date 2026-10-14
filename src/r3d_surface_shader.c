@@ -72,12 +72,6 @@ R3D_SurfaceShader* R3D_LoadSurfaceShaderFromMemory(const char* code)
         return NULL;
     }
 
-    if (!strstr(code, "void vertex()") && !strstr(code, "void fragment()"))
-    {
-        R3D_TRACELOG(LOG_WARNING, "Failed to load surface shader; Missing entry points");
-        return NULL;
-    }
-
     R3D_SurfaceShader* shader = r3d_shader_custom_alloc();
     if (!shader)
     {
@@ -85,80 +79,48 @@ R3D_SurfaceShader* R3D_LoadSurfaceShaderFromMemory(const char* code)
         return NULL;
     }
 
-    int uniformCount = 0;
-    int samplerCount = 0;
-    int varyingCount = 0;
-    int currentOffset = 0;
+    r3d_rshade_source_t parsed = {0};
+
+    if (!r3d_rshade_parse_source(code, &parsed))
+    {
+        R3D_TRACELOG(LOG_ERROR, "Failed to load surface shader; Invalid Ray-Shade source");
+        r3d_shader_custom_free(shader);
+        return NULL;
+    }
+
+    memcpy(shader->data.samplers, parsed.samplers, sizeof(parsed.samplers));
+    memcpy(&shader->data.uniforms, &parsed.uniforms, sizeof(parsed.uniforms));
+
+    int uniformCount = parsed.uniformCount;
+    int samplerCount = parsed.samplerCount;
+    int varyingCount = parsed.varyingCount;
+    int currentOffset = parsed.uniformSize;
+
+    r3d_rshade_varying_t* varyings = parsed.varyings;
+    r3d_rshade_parsed_function_t vertexFunc = parsed.vertex;
+    r3d_rshade_parsed_function_t fragmentFunc = parsed.fragment;
 
     usage_hint_t usage = 0;
-    r3d_rshade_varying_t varyings[32] = {0};
-    r3d_rshade_parsed_function_t vertexFunc = {0};
-    r3d_rshade_parsed_function_t fragmentFunc = {0};
 
-    /* --- PHASE 1: Parse user code and collect metadata --- */
-
+    // Usage pragmas are material-shader compilation hints.
+    // Temporary effects may contain them, but do not need them.
     const char* ptr = code;
 
     while (*ptr)
     {
         r3d_rshade_skip_whitespace_and_comments(&ptr);
+
         if (!*ptr) break;
 
-        // Parse #pragma usage directive
-        if (strncmp(ptr, "#pragma", 7) == 0 && isspace(ptr[7]))
+        if (strncmp(ptr, "#pragma", 7) == 0 &&
+            isspace((unsigned char)ptr[7]))
         {
             usage |= parse_pragma_usage(&ptr);
-            continue;
         }
-
-        // Parse uniform declarations
-        if (r3d_rshade_match_keyword(ptr, "uniform", 7))
+        else
         {
-            ptr += 7;
-            r3d_rshade_parse_uniform(&ptr,
-                shader->data.samplers,
-                &shader->data.uniforms,
-                &samplerCount,
-                &uniformCount,
-                &currentOffset,
-                R3D_MAX_SHADER_SAMPLERS,
-                R3D_MAX_SHADER_UNIFORMS
-            );
-            continue;
+            r3d_rshade_skip_to_end_of_line(&ptr);
         }
-
-        // Parse varying declarations
-        if (r3d_rshade_match_varying_keyword(ptr))
-        {
-            if (varyingCount < 32)
-            {
-                if (r3d_rshade_parse_varying(&ptr, &varyings[varyingCount]))
-                {
-                    varyingCount++;
-                }
-            }
-            else
-            {
-                r3d_rshade_skip_to_semicolon(&ptr);
-            }
-            continue;
-        }
-
-        // Parse vertex() and fragment() functions
-        r3d_rshade_parsed_function_t* func = r3d_rshade_check_shader_entry(ptr, &vertexFunc, &fragmentFunc);
-        if (func)
-        {
-            r3d_rshade_skip_to_brace(&ptr);
-            if (*ptr == '{')
-            {
-                func->bodyStart = ptr;
-                r3d_rshade_skip_to_matching_brace(&ptr);
-                func->bodyEnd = ptr;
-            }
-            continue;
-        }
-
-        ptr++;
     }
 
     /* --- PHASE 2: Generate transformed shader code --- */
@@ -308,7 +270,7 @@ usage_hint_t parse_pragma_usage(const char** ptr)
         };
 
         bool matched = false;
-        for (int i = 0; i < 7; i++)
+        for (int i = 0; i < (int)R3D_ARRAY_SIZE(hints); i++)
         {
             if (strncmp(*ptr, hints[i].name, hints[i].len) == 0 &&
                 (isspace((*ptr)[hints[i].len]) ||
@@ -391,7 +353,7 @@ bool compile_shader_variants(R3D_SurfaceShader* shader, usage_hint_t usage)
         {"probe-unlit",   USAGE_HINT_PROBE,  R3D_MOD_SHADER_LOADER.scene.probeUnlit},
     };
 
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < (int)R3D_ARRAY_SIZE(variants); i++)
     {
         if (R3D_BIT_ANY(usage, variants[i].condition))
         {
