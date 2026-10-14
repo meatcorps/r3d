@@ -45,6 +45,23 @@ typedef struct R3D_View {
     Rectangle viewport;     ///< Viewport inside the target. If width or height <= 0, the full target is used.
 } R3D_View;
 
+/**
+ * @brief A world-space point projected into output-target coordinates.
+ *
+ * Position is in target pixels with a top-left origin.
+ * Depth is normalized to [0, 1] for points between near and far planes.
+ * Values outside that range are retained for clipping decisions.
+ *
+ * insideViewport checks the 2D presentation rectangle only.
+ * It does not imply that the point is inside the camera's depth range.
+ */
+typedef struct R3D_ScreenProjection {
+    Vector2 position;
+    float depth;
+    bool inFront;
+    bool insideViewport;
+} R3D_ScreenProjection;
+
 // ========================================
 // PUBLIC API
 // ========================================
@@ -52,6 +69,63 @@ typedef struct R3D_View {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Projects a world position into the view's output target.
+ *
+ * Uses the same camera and resolved presentation rectangle as R3D rendering.
+ * The returned position includes custom viewport offsets.
+ *
+ * Does not require an active rendering session.
+ * Returns false for invalid input or an undefined projection.
+ */
+R3DAPI bool R3D_WorldToScreen(Vector3 worldPosition, R3D_View view, R3D_ScreenProjection* result);
+
+/**
+ * @brief Creates a world-space ray from an output-target pixel position.
+ *
+ * Returns false if the position is outside the resolved presentation
+ * rectangle, including letterbox bars.
+ *
+ * Perspective rays start at the camera position.
+ * Orthographic rays start on the camera's near plane.
+ *
+ * Does not require an active rendering session.
+ */
+R3DAPI bool R3D_ScreenToWorldRay(Vector2 screenPosition, R3D_View view, Ray* result);
+
+/**
+ * @brief Convenience function for picking a world-space AABB.
+ *
+ * Uses R3D_ScreenToWorldRay() followed by R3D_RaycastBoundingBox().
+ * The bounding box must already be expressed in world coordinates.
+ *
+ * Returns true on a collision, false otherwise.
+ */
+R3DAPI bool R3D_PickBoundingBox(Vector2 screenPosition, R3D_View view, BoundingBox bounds, RayCollision* result);
+
+/**
+ * @brief Projects a local-space bounding box to an output-target rectangle.
+ *
+ * Transforms the eight corners and clips box edges against the near plane.
+ * Coordinates are target pixels with a top-left origin.
+ *
+ * Does not clamp the rectangle to the viewport.
+ * Returns false when no projectable portion remains.
+ */
+R3DAPI bool R3D_BoundingBoxToScreenRect(BoundingBox bounds, Matrix transform, R3D_View view, Rectangle* result);
+
+/**
+ * @brief Projects a mesh's local bounds into a target-space rectangle.
+ */
+R3DAPI bool R3D_MeshToScreenRect(R3D_Mesh mesh, Matrix transform, R3D_View view, Rectangle* result);
+
+/**
+ * @brief Projects a model's bounds into a target-space rectangle.
+ *
+ * Uses the model's animated bounds override when one is configured.
+ */
+R3DAPI bool R3D_ModelToScreenRect(R3D_Model model, Matrix transform, R3D_View view, Rectangle* result);
 
 /**
  * @brief Begins a rendering session using the given raylib camera.

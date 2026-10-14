@@ -7,6 +7,8 @@
  */
 
 #include <r3d/r3d_draw.h>
+#include <r3d/r3d_shape.h>
+#include <r3d/r3d_utils.h>
 #include <r3d/r3d_utils.h>
 #include <r3d_config.h>
 #include <raymath.h>
@@ -59,6 +61,7 @@
 // ========================================
 
 static void update_view_state(R3D_View view);
+static Rectangle view_resolve_present_rect(R3D_View view);
 static void upload_light_array_block_for_mesh(const r3d_render_call_t* call, bool shadow);
 static void upload_frame_block(void);
 static void upload_view_block(void);
@@ -112,6 +115,375 @@ static void cleanup_after_render(void);
 // ========================================
 // PUBLIC API
 // ========================================
+
+static Vector4 projection_transform_clip(Vector4 v, Matrix m)
+{
+    return (Vector4){
+        .x = m.m0 * v.x + m.m4 * v.y + m.m8  * v.z + m.m12 * v.w,
+        .y = m.m1 * v.x + m.m5 * v.y + m.m9  * v.z + m.m13 * v.w,
+        .z = m.m2 * v.x + m.m6 * v.y + m.m10 * v.z + m.m14 * v.w,
+        .w = m.m3 * v.x + m.m7 * v.y + m.m11 * v.z + m.m15 * v.w
+    };
+}
+
+static bool projection_resolve_view(R3D_View view, Rectangle* viewport, Matrix* viewProj)
+{
+    if (!viewport || !viewProj) return false;
+
+    Rectangle rect = view_resolve_present_rect(view);
+
+    if (!isfinite(rect.x) || !isfinite(rect.y) ||
+        !isfinite(rect.width) || !isfinite(rect.height) ||
+        rect.width <= 0.0f || rect.height <= 0.0f)
+    {
+        return false;
+    }
+
+    const R3D_Camera* camera = &view.camera;
+
+    if (!isfinite(camera->nearPlane) ||
+        !isfinite(camera->farPlane) ||
+        !isfinite(camera->fovy) ||
+        camera->nearPlane <= 0.0 ||
+        camera->farPlane <= camera->nearPlane ||
+        camera->fovy <= 0.0)
+    {
+        return false;
+    }
+
+    if (camera->projection == R3D_PROJECTION_PERSPECTIVE &&
+        camera->fovy >= 180.0)
+    {
+        return false;
+    }
+
+    double aspect = (double)rect.width / (double)rect.height;
+
+    if (!isfinite(aspect) || aspect <= 0.0) return false;
+
+    *viewProj = R3D_GetCameraViewProjection(view.camera, aspect);
+    *viewport = rect;
+
+    return true;
+}
+
+bool R3D_WorldToScreen(Vector3 worldPosition, R3D_View view, R3D_ScreenProjection* result)
+{
+    if (!result) return false;
+
+    if (!isfinite(worldPosition.x) ||
+        !isfinite(worldPosition.y) ||
+        !isfinite(worldPosition.z))
+    {
+        return false;
+    }
+
+    Rectangle viewport;
+    Matrix viewProj;
+
+    if (!projection_resolve_view(view, &viewport, &viewProj)) return false;
+
+    Vector4 clip = projection_transform_clip(
+        (Vector4){worldPosition.x, worldPosition.y, worldPosition.z, 1.0f},
+        viewProj
+    );
+
+    if (!isfinite(clip.x) || !isfinite(clip.y) ||
+        !isfinite(clip.z) || !isfinite(clip.w) ||
+        fabsf(clip.w) <= 1e-7f)
+    {
+        return false;
+    }
+
+    const float invW = 1.0f / clip.w;
+
+    const float ndcX = clip.x * invW;
+    const float ndcY = clip.y * invW;
+    const float ndcZ = clip.z * invW;
+
+    R3D_ScreenProjection projected = {0};
+
+    projected.position.x = viewport.x + (ndcX + 1.0f) * 0.5f * viewport.width;
+    projected.position.y = viewport.y + (1.0f - ndcY) * 0.5f * viewport.height;
+
+    projected.depth = ndcZ * 0.5f + 0.5f;
+
+    Vector3 forward = R3D_GetCameraForward(view.camera);
+    Vector3 toPoint = Vector3Subtract(worldPosition, view.camera.position);
+
+    projected.inFront = Vector3DotProduct(toPoint, forward) > 0.0f;
+
+    projected.insideViewport =
+        projected.position.x >= viewport.x &&
+        projected.position.x < viewport.x + viewport.width &&
+        projected.position.y >= viewport.y &&
+        projected.position.y < viewport.y + viewport.height;
+
+    if (!isfinite(projected.position.x) ||
+        !isfinite(projected.position.y) ||
+        !isfinite(projected.depth))
+    {
+        return false;
+    }
+
+    *result = projected;
+    return true;
+}
+
+bool R3D_ScreenToWorldRay(Vector2 screenPosition, R3D_View view, Ray* result)
+{
+    if (!result) return false;
+
+    if (!isfinite(screenPosition.x) || !isfinite(screenPosition.y)) return false;
+
+    Rectangle viewport;
+    Matrix viewProj;
+
+    if (!projection_resolve_view(view, &viewport, &viewProj)) return false;
+
+    if (screenPosition.x < viewport.x ||
+        screenPosition.y < viewport.y ||
+        screenPosition.x >= viewport.x + viewport.width ||
+        screenPosition.y >= viewport.y + viewport.height)
+    {
+        return false;
+    }
+
+    const float ndcX = 2.0f * (screenPosition.x - viewport.x) / viewport.width - 1.0f;
+    const float ndcY = 1.0f - 2.0f * (screenPosition.y - viewport.y) / viewport.height;
+
+    const float determinant = MatrixDeterminant(viewProj);
+
+    if (!isfinite(determinant) || fabsf(determinant) <= 1e-20f)
+    {
+        return false;
+    }
+
+    Matrix inverse = MatrixInvert(viewProj);
+
+    Vector4 nearPoint = projection_transform_clip(
+        (Vector4){ndcX, ndcY, -1.0f, 1.0f},
+        inverse
+    );
+
+    Vector4 farPoint = projection_transform_clip(
+        (Vector4){ndcX, ndcY, 1.0f, 1.0f},
+        inverse
+    );
+
+    if (!isfinite(nearPoint.x) || !isfinite(nearPoint.y) ||
+        !isfinite(nearPoint.z) || !isfinite(nearPoint.w) ||
+        !isfinite(farPoint.x) || !isfinite(farPoint.y) ||
+        !isfinite(farPoint.z) || !isfinite(farPoint.w) ||
+        fabsf(nearPoint.w) <= 1e-7f ||
+        fabsf(farPoint.w) <= 1e-7f)
+    {
+        return false;
+    }
+
+    const float nearInvW = 1.0f / nearPoint.w;
+    const float farInvW = 1.0f / farPoint.w;
+
+    Vector3 nearWorld = {
+        nearPoint.x * nearInvW,
+        nearPoint.y * nearInvW,
+        nearPoint.z * nearInvW
+    };
+
+    Vector3 farWorld = {
+        farPoint.x * farInvW,
+        farPoint.y * farInvW,
+        farPoint.z * farInvW
+    };
+
+    Vector3 origin = view.camera.projection == R3D_PROJECTION_ORTHOGRAPHIC
+        ? nearWorld
+        : view.camera.position;
+
+    Vector3 direction = Vector3Subtract(farWorld, origin);
+    float lengthSq = Vector3LengthSqr(direction);
+
+    if (!isfinite(lengthSq) || lengthSq <= 1e-12f) return false;
+
+    Ray ray = {
+        .position = origin,
+        .direction = Vector3Scale(direction, 1.0f / sqrtf(lengthSq))
+    };
+
+    if (!isfinite(ray.position.x) ||
+        !isfinite(ray.position.y) ||
+        !isfinite(ray.position.z) ||
+        !isfinite(ray.direction.x) ||
+        !isfinite(ray.direction.y) ||
+        !isfinite(ray.direction.z))
+    {
+        return false;
+    }
+
+    *result = ray;
+    return true;
+}
+
+bool R3D_PickBoundingBox(Vector2 screenPosition, R3D_View view, BoundingBox bounds, RayCollision* result)
+{
+    if (!result) return false;
+
+    *result = (RayCollision){0};
+
+    if (!R3D_IsBoundingBoxValid(bounds)) return false;
+
+    Ray ray;
+
+    if (!R3D_ScreenToWorldRay(screenPosition, view, &ray))
+    {
+        return false;
+    }
+
+    *result = R3D_RaycastBoundingBox(ray, bounds);
+    return result->hit;
+}
+
+
+static bool projection_include_rect_point(Vector3 worldPoint, R3D_View view, float* minX, float* minY, float* maxX, float* maxY)
+{
+    R3D_ScreenProjection projected;
+
+    if (!R3D_WorldToScreen(worldPoint, view, &projected)) return false;
+
+    *minX = fminf(*minX, projected.position.x);
+    *minY = fminf(*minY, projected.position.y);
+    *maxX = fmaxf(*maxX, projected.position.x);
+    *maxY = fmaxf(*maxY, projected.position.y);
+
+    return true;
+}
+
+bool R3D_BoundingBoxToScreenRect(BoundingBox bounds, Matrix transform, R3D_View view, Rectangle* result)
+{
+    if (!result || !R3D_IsBoundingBoxValid(bounds)) return false;
+
+    if (!isfinite(view.camera.nearPlane) || view.camera.nearPlane <= 0.0)
+    {
+        return false;
+    }
+
+    Vector3 corners[8];
+    float depths[8];
+
+    const Vector3 forward = R3D_GetCameraForward(view.camera);
+    const float nearPlane = (float)view.camera.nearPlane;
+
+    // Construct and transform the eight box corners.
+    for (int i = 0; i < 8; i++)
+    {
+        Vector3 local = {
+            (i & 1) ? bounds.max.x : bounds.min.x,
+            (i & 2) ? bounds.max.y : bounds.min.y,
+            (i & 4) ? bounds.max.z : bounds.min.z
+        };
+
+        corners[i] = Vector3Transform(local, transform);
+
+        Vector3 relative = Vector3Subtract(
+            corners[i], view.camera.position
+        );
+
+        depths[i] = Vector3DotProduct(relative, forward);
+
+        if (!isfinite(depths[i])) return false;
+    }
+
+    float minX = FLT_MAX;
+    float minY = FLT_MAX;
+    float maxX = -FLT_MAX;
+    float maxY = -FLT_MAX;
+
+    bool hasPoint = false;
+
+    // Project corners that lie in front of the near plane.
+    for (int i = 0; i < 8; i++)
+    {
+        if (depths[i] < nearPlane) continue;
+
+        if (projection_include_rect_point(
+            corners[i], view, &minX, &minY, &maxX, &maxY))
+        {
+            hasPoint = true;
+        }
+    }
+
+    // Edges of the box, expressed as corner-index pairs.
+    static const int edges[12][2] = {
+        {0, 1}, {0, 2}, {0, 4},
+        {1, 3}, {1, 5},
+        {2, 3}, {2, 6},
+        {3, 7},
+        {4, 5}, {4, 6},
+        {5, 7},
+        {6, 7}
+    };
+
+    // Include intersections of edges crossing the near plane.
+    // This prevents the rectangle disappearing when some
+    // corners are behind the camera's near clipping plane.
+    for (int i = 0; i < 12; i++)
+    {
+        const int a = edges[i][0];
+        const int b = edges[i][1];
+
+        bool aFront = depths[a] >= nearPlane;
+        bool bFront = depths[b] >= nearPlane;
+
+        if (aFront == bFront) continue;
+
+        const float denominator = depths[b] - depths[a];
+        if (fabsf(denominator) <= 1e-8f) continue;
+
+        const float t = (nearPlane - depths[a]) / denominator;
+
+        Vector3 intersection = Vector3Lerp(
+            corners[a], corners[b], t
+        );
+
+        if (projection_include_rect_point(
+            intersection, view, &minX, &minY, &maxX, &maxY))
+        {
+            hasPoint = true;
+        }
+    }
+
+    if (!hasPoint) return false;
+
+    Rectangle rect = {
+        .x = minX,
+        .y = minY,
+        .width = maxX - minX,
+        .height = maxY - minY
+    };
+
+    if (!isfinite(rect.x) || !isfinite(rect.y) ||
+        !isfinite(rect.width) || !isfinite(rect.height))
+    {
+        return false;
+    }
+
+    *result = rect;
+    return true;
+}
+
+bool R3D_MeshToScreenRect(R3D_Mesh mesh, Matrix transform, R3D_View view, Rectangle* result)
+{
+    return R3D_BoundingBoxToScreenRect(mesh.aabb, transform, view, result);
+}
+
+bool R3D_ModelToScreenRect(R3D_Model model, Matrix transform, R3D_View view, Rectangle* result)
+{
+    BoundingBox bounds = model.hasAnimatedAabb
+        ? model.animatedAabb
+        : model.aabb;
+
+    return R3D_BoundingBoxToScreenRect(bounds, transform, view, result);
+}
 
 void R3D_Begin(Camera3D camera)
 {

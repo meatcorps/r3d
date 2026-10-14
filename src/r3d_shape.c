@@ -954,12 +954,22 @@ RayCollision R3D_RaycastBoundingBox(Ray ray, R3D_BoundingBox box)
         float tNear = near ? t1 : t2;
         float tFar  = near ? t2 : t1;
 
-        if (tNear > tmin) tmin = tNear, axis = i, flip = !near;
+        if (tNear > tmin) tmin = tNear, axis = i, flip = near;
         if (tFar < tmax) tmax = tFar;
         if (tmin > tmax) return (RayCollision){0};
     }
 
     if (tmin < 0) return (RayCollision){0};
+
+    if (axis < 0)
+    {
+        return (RayCollision){
+            .hit = true,
+            .distance = 0.0f,
+            .point = ray.position,
+            .normal = Vector3Negate(ray.direction)
+        };
+    }
 
     Vector3 normals[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
     Vector3 normal = normals[axis];
