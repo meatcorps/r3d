@@ -49,7 +49,7 @@ void r3d_effect_init(void);
 void r3d_effect_quit(void);
 void r3d_effect_clear(void);
 
-void r3d_effect_push(R3D_SurfaceEffect* effect);
+bool r3d_effect_push(R3D_SurfaceEffect* effect);
 void r3d_effect_pop(void);
 bool r3d_effect_has_active(void);
 

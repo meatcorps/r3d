@@ -576,12 +576,12 @@ bool r3d_effect_has_active(void)
     return activeEffects && !R3D_LIST_EMPTY(activeEffects);
 }
 
-void r3d_effect_push(R3D_SurfaceEffect* effect)
+bool r3d_effect_push(R3D_SurfaceEffect* effect)
 {
     if (!effect || !activeEffects || !parameterBytes || !samplerTextures)
     {
         TraceLog(LOG_ERROR, "R3D: Surface effect state is not initialized");
-        return;
+        return false;
     }
 
     size_t offset = R3D_LIST_LENGTH(parameterBytes);
@@ -593,13 +593,13 @@ void r3d_effect_push(R3D_SurfaceEffect* effect)
         (size_t)effect->samplerCount > UINT32_MAX - samplerOffset)
     {
         TraceLog(LOG_ERROR, "R3D: Surface effect sampler snapshot limit reached");
-        return;
+        return false;
     }
 
     if (offset > UINT32_MAX || size > UINT32_MAX - offset)
     {
         TraceLog(LOG_ERROR, "R3D: Surface effect parameter storage limit reached");
-        return;
+        return false;
     }
 
     r3d_effect_snapshot_t snapshot = {
@@ -625,6 +625,7 @@ void r3d_effect_push(R3D_SurfaceEffect* effect)
 
     R3D_LIST_PUSH(activeEffects, snapshot);
     captureCacheValid = false;
+    return true;
 }
 
 void r3d_effect_pop(void)

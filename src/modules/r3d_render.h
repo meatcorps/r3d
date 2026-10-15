@@ -13,6 +13,7 @@
 #include <r3d/r3d_instance.h>
 #include <r3d/r3d_material.h>
 #include <r3d/r3d_draw.h>
+#include <r3d/r3d_render_mode_builder.h>
 #include <r3d/r3d_utils.h>
 #include <r3d/r3d_skeleton.h>
 #include <r3d/r3d_frustum.h>
@@ -356,6 +357,7 @@ extern struct r3d_mod_render {
     r3d_list_t* sortCache;                              //< Draw call sorting data cache array (list<r3d_render_sort_t>)
     r3d_list_t* calls;                                  //< Array of draw calls (list<r3d_render_call_t>)
     r3d_list_t* modeStack;                              //< Cumulative temporary render modes
+    r3d_list_t* builtModeStack;                         //< Whether each built scope pushed an effect
     r3d_list_t* groupIndices;                           //< Array of group indices for each draw call (list<int>, automatically managed)
 
     bool groupCulled;                                   //< Indicates if groups already culled (controls visibility reset)
@@ -432,6 +434,9 @@ void r3d_render_upload_elements(int offset, const GLuint* indices, int count);
  * Clear all render lists and reset the draw call buffer for the next frame.
  */
 void r3d_render_clear(void);
+
+void r3d_render_built_mode_push(R3D_BuiltRenderMode built);
+void r3d_render_built_mode_pop(void);
 
 void r3d_render_mode_push(R3D_RenderMode mode);
 

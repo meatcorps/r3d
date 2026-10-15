@@ -47,7 +47,7 @@
 #define IS_MESH_VISIBLE_CAMERA(mesh) \
     (IS_MESH_VISIBLE((mesh), R3D.viewState.camera.cullMask))
 
-#define SHADOW_CAST_ONLY_MASK (                 \
+#define R3D_SHADOW_CAST_ONLY_MASK (                 \
     (1 << R3D_SHADOW_CAST_ONLY_AUTO) |          \
     (1 << R3D_SHADOW_CAST_ONLY_DOUBLE_SIDED) |  \
     (1 << R3D_SHADOW_CAST_ONLY_FRONT_SIDE) |    \
@@ -2308,6 +2308,7 @@ void pass_scene_probes(void)
 {
     #define RASTER_PROBE(opaque)                                    \
     do {                                                            \
+        if (IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode)) break; \
         if (!call->mesh.material.unlit)                             \
         {                                                           \
             upload_light_array_block_for_mesh(call, job->shadows);  \
@@ -2431,7 +2432,11 @@ void pass_scene_geometry(void)
 
     R3D_TARGET_BIND_LOAD(0, true, R3D_TARGET_GBUFFER);
 
-    #define COND (IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && (!call->mesh.material.unlit))
+    #define COND ( \
+    IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && \
+    !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode) && \
+    !call->mesh.material.unlit \
+    )
     R3D_RENDER_FOR_EACH(call, COND, &R3D.viewState.frustum, R3D_RENDER_LIST_OPAQUE_INST, R3D_RENDER_LIST_OPAQUE)
     {
         raster_geometry(call);
@@ -2990,7 +2995,11 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     r3d_driver_disable(GL_BLEND);
     r3d_driver_set_depth_mask(GL_TRUE);
 
-    #define COND (IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && (call->mesh.material.unlit))
+    #define COND ( \
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && \
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode) && \
+        call->mesh.material.unlit \
+    )
     R3D_RENDER_FOR_EACH(call, COND, &R3D.viewState.frustum, R3D_RENDER_LIST_OPAQUE_INST, R3D_RENDER_LIST_OPAQUE)
     {
         raster_unlit(call, true);
@@ -3002,7 +3011,7 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     r3d_driver_enable(GL_BLEND);
     r3d_driver_set_depth_mask(GL_FALSE);
 
-    R3D_RENDER_FOR_EACH(call, IS_MESH_VISIBLE_CAMERA(call->mesh.instance), &R3D.viewState.frustum, R3D_RENDER_LIST_BLEND_INST, R3D_RENDER_LIST_BLEND)
+    R3D_RENDER_FOR_EACH(call, (IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode)), &R3D.viewState.frustum, R3D_RENDER_LIST_BLEND_INST, R3D_RENDER_LIST_BLEND)
     {
         if (!call->mesh.material.unlit)
         {

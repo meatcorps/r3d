@@ -51,6 +51,7 @@
 #include "r3d_sky.h"
 #include "r3d_surface_shader.h"
 #include "r3d_surface_effect.h"
+#include "r3d_render_mode_builder.h"
 #include "r3d_utils.h"
 
 #endif // R3D_H

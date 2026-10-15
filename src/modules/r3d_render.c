@@ -906,10 +906,11 @@ bool r3d_render_init(void)
         R3D_MOD_RENDER.list[i] = R3D_LIST_CREATE(int, cap);
     }
 
-    R3D_MOD_RENDER.calls        = R3D_LIST_CREATE(r3d_render_call_t, cap);
-    R3D_MOD_RENDER.groupIndices = R3D_LIST_CREATE(int, cap);
-    R3D_MOD_RENDER.sortCache    = R3D_LIST_CREATE(r3d_render_sort_t, cap);
-    R3D_MOD_RENDER.modeStack    = R3D_LIST_CREATE(R3D_RenderMode, 8);
+    R3D_MOD_RENDER.calls          = R3D_LIST_CREATE(r3d_render_call_t, cap);
+    R3D_MOD_RENDER.groupIndices   = R3D_LIST_CREATE(int, cap);
+    R3D_MOD_RENDER.sortCache      = R3D_LIST_CREATE(r3d_render_sort_t, cap);
+    R3D_MOD_RENDER.modeStack      = R3D_LIST_CREATE(R3D_RenderMode, 8);
+    R3D_MOD_RENDER.builtModeStack = R3D_LIST_CREATE(bool, 8);
 
     R3D_MOD_RENDER.activeCluster = -1;
 
@@ -1065,6 +1066,7 @@ void r3d_render_quit(void)
     R3D_LIST_DESTROY(R3D_MOD_RENDER.groups);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.calls);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.modeStack);
+    R3D_LIST_DESTROY(R3D_MOD_RENDER.builtModeStack);
 
     /* --- Realease free lists --- */
 
@@ -1331,6 +1333,7 @@ void r3d_render_clear(void)
     R3D_LIST_CLEAR(R3D_MOD_RENDER.sortCache);
     r3d_effect_clear();
     R3D_LIST_CLEAR(R3D_MOD_RENDER.modeStack);
+    R3D_LIST_CLEAR(R3D_MOD_RENDER.builtModeStack);
 
     R3D_MOD_RENDER.groupCulled = false;
 
@@ -1367,6 +1370,32 @@ bool r3d_render_cluster_end(void)
     if (R3D_MOD_RENDER.activeCluster < 0) return false;
     R3D_MOD_RENDER.activeCluster = -1;
     return true;
+}
+
+void r3d_render_built_mode_push(R3D_BuiltRenderMode built)
+{
+    r3d_render_mode_push(built.mode);
+
+    bool hasEffect = built.effect && r3d_effect_push(built.effect);
+
+    R3D_LIST_PUSH(R3D_MOD_RENDER.builtModeStack, hasEffect);
+}
+
+void r3d_render_built_mode_pop(void)
+{
+    if (R3D_LIST_EMPTY(R3D_MOD_RENDER.builtModeStack))
+    {
+        TraceLog(LOG_WARNING, "R3D: Built render mode stack underflow");
+        return;
+    }
+
+    bool hasEffect = false;
+    R3D_LIST_POP(R3D_MOD_RENDER.builtModeStack, &hasEffect);
+
+    if (hasEffect)
+        r3d_effect_pop();
+
+    r3d_render_mode_pop();
 }
 
 void r3d_render_mode_push(R3D_RenderMode mode)
