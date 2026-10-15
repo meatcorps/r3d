@@ -99,7 +99,8 @@ typedef struct {
     pipeline_entry_t depthFactor;
     pipeline_entry_t stencilFunc;
     pipeline_entry_t stencilRef;
-    pipeline_entry_t stencilMask;
+    pipeline_entry_t stencilReadMask;
+    pipeline_entry_t stencilWriteMask;
     pipeline_entry_t stencilOpFail;
     pipeline_entry_t stencilOpZFail;
     pipeline_entry_t stencilOpZPass;
@@ -341,11 +342,14 @@ void r3d_driver_set_depth_offset(float units, float factor)
 
 void r3d_driver_set_stencil_func(GLenum func, uint8_t ref, uint8_t mask)
 {
-    if (CHECK_PIPE(stencilFunc, enum, func) || CHECK_PIPE(stencilRef, byte, ref) || CHECK_PIPE(stencilMask, byte, mask))
+    if (CHECK_PIPE(stencilFunc, enum, func) ||
+        CHECK_PIPE(stencilRef, byte, ref) ||
+        CHECK_PIPE(stencilReadMask, byte, mask))
     {
         SET_PIPE(stencilFunc, enum, func);
-        SET_PIPE(stencilMask, byte, mask);
         SET_PIPE(stencilRef, byte, ref);
+        SET_PIPE(stencilReadMask, byte, mask);
+
         glStencilFunc(func, ref, mask);
     }
 }
@@ -363,9 +367,9 @@ void r3d_driver_set_stencil_op(GLenum fail, GLenum zFail, GLenum zPass)
 
 void r3d_driver_set_stencil_mask(uint8_t mask)
 {
-    if (CHECK_PIPE(stencilMask, byte, mask))
+    if (CHECK_PIPE(stencilWriteMask, byte, mask))
     {
-        SET_PIPE(stencilMask, byte, mask);
+        SET_PIPE(stencilWriteMask, byte, mask);
         glStencilMask(mask);
     }
 }
