@@ -118,7 +118,8 @@ typedef enum R3D_BlendMode {
     R3D_BLEND_ADDITIVE,             ///< Pure additive blending: source color is added directly to destination (ignores alpha).
     R3D_BLEND_ADD_ALPHA,            ///< Alpha-modulated additive blending: source color scaled by alpha before adding to destination.
     R3D_BLEND_MULTIPLY,             ///< Multiply blending: source color is multiplied with destination, darkening the image.
-    R3D_BLEND_PREMULTIPLIED_ALPHA   ///< Premultiplied alpha blending: assumes source color is already multiplied by its alpha.
+    R3D_BLEND_PREMULTIPLIED_ALPHA,  ///< Premultiplied alpha blending: assumes source color is already multiplied by its alpha.
+    R3D_BLEND_SCREEN                ///< Screen blending: brightens the destination.
 } R3D_BlendMode;
 
 /**

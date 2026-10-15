@@ -527,6 +527,13 @@ void r3d_driver_set_blend_mode(R3D_BlendMode blend)
             GL_ONE, GL_ONE_MINUS_SRC_ALPHA
         );
         break;
+    case R3D_BLEND_SCREEN:
+        r3d_driver_set_blend_func_separate(
+            GL_FUNC_ADD,
+            GL_ONE, GL_ONE_MINUS_SRC_COLOR,
+            GL_ZERO, GL_ONE
+        );
+        break;
     default:
         break;
     }

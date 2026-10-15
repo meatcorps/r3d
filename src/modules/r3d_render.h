@@ -126,7 +126,13 @@ typedef enum {
     R3D_RENDER_LIST_OPAQUE_INST,
     R3D_RENDER_LIST_BLEND_INST,
     R3D_RENDER_LIST_DECAL_INST,
-    R3D_RENDER_LIST_COUNT,
+    R3D_RENDER_LIST_DEPTH_ONLY,
+    R3D_RENDER_LIST_STENCIL_MASK,
+    R3D_RENDER_LIST_STENCIL_TEST,
+    R3D_RENDER_LIST_WIREFRAME,
+    R3D_RENDER_LIST_WIREFRAME_OVERLAY,
+    R3D_RENDER_LIST_OVERLAY,
+    R3D_RENDER_LIST_COUNT
 } r3d_render_list_enum_t;
 
 // ========================================
@@ -250,8 +256,13 @@ typedef struct {
 typedef struct {
     R3D_Material material;
     R3D_Mesh instance;
-
     r3d_render_morph_t morph;
+
+    R3D_RenderPass renderPass;
+    Color wireColor;
+
+    bool depthWriteOverride;
+    bool depthWrite;
 } r3d_render_call_mesh_t;
 
 /*

@@ -76,7 +76,10 @@ static void raster_probe_unlit(const r3d_render_call_t* call, const r3d_env_prob
 static void raster_geometry(const r3d_render_call_t* call);
 static void raster_decal(const r3d_render_call_t* call);
 static void raster_forward(const r3d_render_call_t* call);
-static void raster_unlit(const r3d_render_call_t* call, bool opaque);
+static void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor);
+static void raster_wireframe(const r3d_render_call_t* call);
+static void pass_scene_depth_only(void);
+static void pass_scene_stencil_mask(r3d_target_t sceneTarget);
 
 static void pass_scene_shadows(void);
 static void pass_scene_probes(void);
@@ -582,6 +585,11 @@ void R3D_End(void)
     r3d_target_t ssilSource  = R3D_TARGET_INVALID;
     r3d_target_t ssgiSource  = R3D_TARGET_INVALID;
     r3d_target_t ssrSource   = R3D_TARGET_INVALID;
+
+    if (!R3D_LIST_EMPTY(R3D_MOD_RENDER.list[R3D_RENDER_LIST_DEPTH_ONLY]))
+    {
+        pass_scene_depth_only();
+    }
 
     if (r3d_render_has_opaque())
     {
@@ -2175,7 +2183,7 @@ void raster_forward(const r3d_render_call_t* call)
     }
 }
 
-void raster_unlit(const r3d_render_call_t* call, bool opaque)
+void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor)
 {
     R3D_ASSERT(call->type == R3D_RENDER_CALL_MESH); //< Paranoid assert, should be fine
 
@@ -2184,23 +2192,28 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque)
 
     /* --- Use shader --- */
 
-    R3D_SurfaceShader* baseShader = call->mesh.material.shader;
+    R3D_SurfaceShader* baseShader = wireColor ? NULL : call->mesh.material.shader;
 
-    R3D_SurfaceShader* shader = r3d_effect_resolve_shader(
-        baseShader,
-        group->effectFirstSnapshot,
-        group->effectSnapshotCount
-    );
+    R3D_SurfaceShader* shader = wireColor
+        ? NULL
+        : r3d_effect_resolve_shader(
+            baseShader,
+            group->effectFirstSnapshot,
+            group->effectSnapshotCount
+        );
 
     R3D_SHADER_USE_SELECT(scene.unlit, shader);
 
-    r3d_effect_bind_shader(
-        shader,
-        baseShader,
-        group->effectFirstSnapshot,
-        group->effectSnapshotCount,
-        R3D_SHADER_SELECT(scene.unlit, shader)->id
-    );
+    if (!wireColor)
+    {
+        r3d_effect_bind_shader(
+            shader,
+            baseShader,
+            group->effectFirstSnapshot,
+            group->effectSnapshotCount,
+            R3D_SHADER_SELECT(scene.unlit, shader)->id
+        );
+    }
 
     /* --- Send matrices --- */
 
@@ -2235,17 +2248,26 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque)
     bool hybrid = (material->transparencyMode == R3D_TRANSPARENCY_HYBRID);
     float cutoffSign = opaque ? 1.0f : (hybrid ? -1.0f : 0.0f);
 
-    R3D_SHADER_SET_COL4_SELECT(scene.unlit, shader, uAlbedoColor, material->albedo.color);
+    R3D_SHADER_SET_COL4_SELECT(scene.unlit, shader, uAlbedoColor, wireColor ? *wireColor : material->albedo.color);
     R3D_SHADER_SET_FLOAT_SELECT(scene.unlit, shader, uAlphaCutoff, material->alphaCutoff);
     R3D_SHADER_SET_FLOAT_SELECT(scene.unlit, shader, uCutoffSign, cutoffSign);
 
     /* --- Bind active texture maps --- */
 
-    R3D_SHADER_BIND_SAMPLER_SELECT(scene.unlit, shader, uAlbedoMap, R3D_TEXTURE_SELECT(material->albedo.texture.id, WHITE));
+    R3D_SHADER_BIND_SAMPLER_SELECT(scene.unlit, shader, uAlbedoMap, R3D_TEXTURE_SELECT(wireColor ? 0 : material->albedo.texture.id, WHITE));
 
     /* --- Applying material parameters that are independent of shaders --- */
 
-    r3d_driver_set_depth_state(material->depth);
+    R3D_DepthState depth = material->depth;
+
+    if (wireColor && call->mesh.renderPass == R3D_RENDER_PASS_WIREFRAME_OVERLAY)
+    {
+        depth.mode = R3D_COMPARE_LEQUAL;
+        depth.offsetFactor = -1.0f;
+        depth.offsetUnits = -1.0f;
+    }
+
+    r3d_driver_set_depth_state(depth);
     r3d_driver_set_stencil_state(material->stencil);
     if (!opaque) r3d_driver_set_blend_mode(material->blendMode);
     r3d_driver_set_cull_mode(material->cullMode);
@@ -2262,6 +2284,25 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque)
         R3D_SHADER_SET_INT_SELECT(scene.unlit, shader, uInstancing, false);
         r3d_render_draw(call);
     }
+}
+
+static void apply_camera_depth_write(const r3d_render_call_t* call, bool defaultWrite)
+{
+    bool write = call->mesh.depthWriteOverride
+        ? call->mesh.depthWrite
+        : defaultWrite;
+
+    r3d_driver_set_depth_mask(write ? GL_TRUE : GL_FALSE);
+}
+
+void raster_wireframe(const r3d_render_call_t* call)
+{
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glLineWidth(1.0f);
+
+    raster_unlit(call, false, &call->mesh.wireColor);
+
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
 void pass_scene_shadows(void)
@@ -2420,6 +2461,63 @@ void pass_scene_probes(void)
     #undef RASTER_PROBE
 }
 
+void pass_scene_depth_only(void)
+{
+    R3D_TARGET_BIND_LOAD(0, true, R3D_TARGET_GBUFFER);
+
+    r3d_driver_enable(GL_DEPTH_TEST);
+    r3d_driver_disable(GL_STENCIL_TEST);
+    r3d_driver_disable(GL_BLEND);
+
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_DEPTH_ONLY
+    )
+    {
+        apply_camera_depth_write(call, true);
+        raster_unlit(call, true, NULL);
+    }
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    r3d_driver_set_depth_mask(GL_TRUE);
+    r3d_driver_set_depth_offset(0.0f, 0.0f);
+    r3d_driver_set_depth_range(0.0f, 1.0f);
+}
+
+void pass_scene_stencil_mask(r3d_target_t sceneTarget)
+{
+    R3D_TARGET_BIND_LOAD(0, true, sceneTarget);
+
+    r3d_driver_enable(GL_DEPTH_TEST);
+    r3d_driver_enable(GL_STENCIL_TEST);
+    r3d_driver_disable(GL_BLEND);
+
+    r3d_driver_set_depth_mask(GL_FALSE);
+    r3d_driver_set_stencil_mask(0xFF);
+
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_STENCIL_MASK
+    )
+    {
+        raster_unlit(call, false, NULL);
+    }
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    r3d_driver_set_depth_offset(0.0f, 0.0f);
+    r3d_driver_set_depth_range(0.0f, 1.0f);
+}
+
 void pass_scene_geometry(void)
 {
     r3d_driver_enable(GL_STENCIL_TEST);
@@ -2439,8 +2537,11 @@ void pass_scene_geometry(void)
     )
     R3D_RENDER_FOR_EACH(call, COND, &R3D.viewState.frustum, R3D_RENDER_LIST_OPAQUE_INST, R3D_RENDER_LIST_OPAQUE)
     {
+        apply_camera_depth_write(call, true);
         raster_geometry(call);
     }
+
+    r3d_driver_set_depth_mask(GL_TRUE);
     #undef COND
 
     r3d_driver_set_depth_offset(0.0f, 0.0f);
@@ -2990,42 +3091,129 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     r3d_driver_enable(GL_STENCIL_TEST);
     r3d_driver_enable(GL_DEPTH_TEST);
 
-    /* --- Render all unlit opaque --- */
+    /* --- Unlit opaque geometry --- */
 
     r3d_driver_disable(GL_BLEND);
-    r3d_driver_set_depth_mask(GL_TRUE);
 
     #define COND ( \
         IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && \
         !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode) && \
         call->mesh.material.unlit \
     )
-    R3D_RENDER_FOR_EACH(call, COND, &R3D.viewState.frustum, R3D_RENDER_LIST_OPAQUE_INST, R3D_RENDER_LIST_OPAQUE)
+
+    R3D_RENDER_FOR_EACH(
+        call, COND, &R3D.viewState.frustum,
+        R3D_RENDER_LIST_OPAQUE_INST, R3D_RENDER_LIST_OPAQUE
+    )
     {
-        raster_unlit(call, true);
+        apply_camera_depth_write(call, true);
+        raster_unlit(call, true, NULL);
     }
+
     #undef COND
 
-    /* --- Render all lit/unlit blended --- */
+    /* --- Invisible stencil writers --- */
+
+    if (!R3D_LIST_EMPTY(R3D_MOD_RENDER.list[R3D_RENDER_LIST_STENCIL_MASK]))
+    {
+        pass_scene_stencil_mask(sceneTarget);
+    }
+
+    /* --- Stencil-tested objects --- */
 
     r3d_driver_enable(GL_BLEND);
-    r3d_driver_set_depth_mask(GL_FALSE);
+    r3d_driver_enable(GL_STENCIL_TEST);
+    r3d_driver_enable(GL_DEPTH_TEST);
 
-    R3D_RENDER_FOR_EACH(call, (IS_MESH_VISIBLE_CAMERA(call->mesh.instance) && !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode)), &R3D.viewState.frustum, R3D_RENDER_LIST_BLEND_INST, R3D_RENDER_LIST_BLEND)
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_STENCIL_TEST
+    )
     {
-        if (!call->mesh.material.unlit)
+        apply_camera_depth_write(call, false);
+
+        if (call->mesh.material.unlit)
+        {
+            raster_unlit(call, false, NULL);
+        }
+        else
         {
             upload_light_array_block_for_mesh(call, true);
             raster_forward(call);
         }
+    }
+
+    /* --- Ordinary lit/unlit transparency --- */
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_BLEND_INST, R3D_RENDER_LIST_BLEND
+    )
+    {
+        apply_camera_depth_write(call, false);
+
+        if (call->mesh.material.unlit)
+        {
+            raster_unlit(call, false, NULL);
+        }
         else
         {
-            raster_unlit(call, false);
+            upload_light_array_block_for_mesh(call, true);
+            raster_forward(call);
         }
     }
 
-    /* --- Reset undesired states --- */
+    /* --- Wireframe and wireframe overlay --- */
 
+    r3d_driver_enable(GL_BLEND);
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_WIREFRAME,
+        R3D_RENDER_LIST_WIREFRAME_OVERLAY
+    )
+    {
+        apply_camera_depth_write(call, false);
+        raster_wireframe(call);
+    }
+
+    /* --- Final overlay objects --- */
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_OVERLAY
+    )
+    {
+        apply_camera_depth_write(call, false);
+
+        if (call->mesh.material.unlit)
+        {
+            raster_unlit(call, false, NULL);
+        }
+        else
+        {
+            upload_light_array_block_for_mesh(call, true);
+            raster_forward(call);
+        }
+    }
+
+    /* --- Restore state --- */
+
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    r3d_driver_set_depth_mask(GL_TRUE);
     r3d_driver_set_depth_offset(0.0f, 0.0f);
     r3d_driver_set_depth_range(0.0f, 1.0f);
 }

@@ -1418,7 +1418,15 @@ void r3d_render_mode_push(R3D_RenderMode mode)
         effective.cullMode = mode.cullMode;
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH)
+    {
         effective.depth = mode.depth;
+
+        if (!(mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE))
+            effective.overrideMask &= ~R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE;
+    }
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE)
+        effective.depthCompare = mode.depthCompare;
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
         effective.stencil = mode.stencil;
@@ -1431,6 +1439,18 @@ void r3d_render_mode_push(R3D_RenderMode mode)
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_SHADOW)
         effective.shadowCastMode = mode.shadowCastMode;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_PASS)
+        effective.renderPass = mode.renderPass;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_ALBEDO)
+        effective.albedoColor = mode.albedoColor;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_WIRE_COLOR)
+        effective.wireColor = mode.wireColor;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH_WRITE)
+        effective.depthWrite = mode.depthWrite;
 
     effective.overrideMask |= mode.overrideMask;
 
@@ -1465,6 +1485,9 @@ static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mod
     if (mask & R3D_RENDER_MODE_OVERRIDE_DEPTH)
         material->depth = mode->depth;
 
+    if (mask & R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE)
+        material->depth.mode = mode->depthCompare;
+
     if (mask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
         material->stencil = mode->stencil;
 
@@ -1476,6 +1499,24 @@ static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mod
 
     if (mask & R3D_RENDER_MODE_OVERRIDE_SHADOW)
         call->mesh.instance.shadowCastMode = mode->shadowCastMode;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_PASS)
+        call->mesh.renderPass = mode->renderPass;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_ALBEDO)
+    {
+        material->albedo.color = mode->albedoColor;
+        material->albedo.texture.id = 0;
+    }
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_WIRE_COLOR)
+        call->mesh.wireColor = mode->wireColor;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_DEPTH_WRITE)
+    {
+        call->mesh.depthWriteOverride = true;
+        call->mesh.depthWrite = mode->depthWrite;
+    }
 }
 
 void r3d_render_group_push(const r3d_render_group_t* group)
@@ -1547,21 +1588,59 @@ void r3d_render_call_push(const r3d_render_call_t* call)
     }
     else
     {
-        r3d_render_list_enum_t opaqueList = instanced ? R3D_RENDER_LIST_OPAQUE_INST : R3D_RENDER_LIST_OPAQUE;
-        r3d_render_list_enum_t blendList  = instanced ? R3D_RENDER_LIST_BLEND_INST  : R3D_RENDER_LIST_BLEND;
+        const R3D_RenderPass pass = call->mesh.renderPass;
 
-        switch (call->mesh.material.transparencyMode)
+        r3d_render_list_enum_t opaqueList =
+            instanced ? R3D_RENDER_LIST_OPAQUE_INST : R3D_RENDER_LIST_OPAQUE;
+
+        r3d_render_list_enum_t blendList =
+            instanced ? R3D_RENDER_LIST_BLEND_INST : R3D_RENDER_LIST_BLEND;
+
+        if (pass == R3D_RENDER_PASS_DEPTH_ONLY)
         {
-        case R3D_TRANSPARENCY_OPAQUE:
-            R3D_LIST_PUSH(R3D_MOD_RENDER.list[opaqueList], callIndex);
-            break;
-        case R3D_TRANSPARENCY_HYBRID:
-            R3D_LIST_PUSH(R3D_MOD_RENDER.list[opaqueList], callIndex);
-            R3D_LIST_PUSH(R3D_MOD_RENDER.list[blendList], callIndex);
-            break;
-        case R3D_TRANSPARENCY_BLEND:
-            R3D_LIST_PUSH(R3D_MOD_RENDER.list[blendList], callIndex);
-            break;
+            R3D_LIST_PUSH(R3D_MOD_RENDER.list[R3D_RENDER_LIST_DEPTH_ONLY], callIndex);
+        }
+        else if (pass == R3D_RENDER_PASS_STENCIL_MASK)
+        {
+            R3D_LIST_PUSH(R3D_MOD_RENDER.list[R3D_RENDER_LIST_STENCIL_MASK], callIndex);
+        }
+        else if (pass == R3D_RENDER_PASS_STENCIL_TEST)
+        {
+            R3D_LIST_PUSH(R3D_MOD_RENDER.list[R3D_RENDER_LIST_STENCIL_TEST], callIndex);
+        }
+        else if (pass == R3D_RENDER_PASS_WIREFRAME)
+        {
+            R3D_LIST_PUSH(R3D_MOD_RENDER.list[R3D_RENDER_LIST_WIREFRAME], callIndex);
+        }
+        else if (pass == R3D_RENDER_PASS_OVERLAY)
+        {
+            R3D_LIST_PUSH(R3D_MOD_RENDER.list[R3D_RENDER_LIST_OVERLAY], callIndex);
+        }
+        else
+        {
+            switch (call->mesh.material.transparencyMode)
+            {
+                case R3D_TRANSPARENCY_OPAQUE:
+                    R3D_LIST_PUSH(R3D_MOD_RENDER.list[opaqueList], callIndex);
+                    break;
+
+                case R3D_TRANSPARENCY_HYBRID:
+                    R3D_LIST_PUSH(R3D_MOD_RENDER.list[opaqueList], callIndex);
+                    R3D_LIST_PUSH(R3D_MOD_RENDER.list[blendList], callIndex);
+                    break;
+
+                case R3D_TRANSPARENCY_BLEND:
+                    R3D_LIST_PUSH(R3D_MOD_RENDER.list[blendList], callIndex);
+                    break;
+            }
+
+            if (pass == R3D_RENDER_PASS_WIREFRAME_OVERLAY)
+            {
+                R3D_LIST_PUSH(
+                    R3D_MOD_RENDER.list[R3D_RENDER_LIST_WIREFRAME_OVERLAY],
+                    callIndex
+                );
+            }
         }
     }
 

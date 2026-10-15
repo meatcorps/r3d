@@ -74,6 +74,7 @@ add_example(r3d_draw_immediate "examples/draw_immediate.c")
 add_example(r3d_draw_surface_effects "examples/draw_surface_effects.c")
 add_example(r3d_benchmark_surface_effects "examples/benchmark_surface_effects.c")
 add_example(r3d_effect_shadow_validation "examples/effect_shadow_validation.c")
+add_example(r3d_draw_render_modes "examples/draw_render_modes.c")
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")

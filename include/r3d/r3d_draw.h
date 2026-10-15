@@ -50,15 +50,30 @@ typedef struct R3D_View {
  * Fields without a matching bit retain their original material values.
  */
 typedef enum R3D_RenderModeOverride {
-    R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY = 1u << 0,
-    R3D_RENDER_MODE_OVERRIDE_BLEND        = 1u << 1,
-    R3D_RENDER_MODE_OVERRIDE_CULL         = 1u << 2,
-    R3D_RENDER_MODE_OVERRIDE_DEPTH        = 1u << 3,
-    R3D_RENDER_MODE_OVERRIDE_STENCIL      = 1u << 4,
-    R3D_RENDER_MODE_OVERRIDE_UNLIT        = 1u << 5,
-    R3D_RENDER_MODE_OVERRIDE_PRIORITY     = 1u << 6,
-    R3D_RENDER_MODE_OVERRIDE_SHADOW       = 1u << 7,
+    R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY  = 1u << 0,
+    R3D_RENDER_MODE_OVERRIDE_BLEND         = 1u << 1,
+    R3D_RENDER_MODE_OVERRIDE_CULL          = 1u << 2,
+    R3D_RENDER_MODE_OVERRIDE_DEPTH         = 1u << 3,
+    R3D_RENDER_MODE_OVERRIDE_STENCIL       = 1u << 4,
+    R3D_RENDER_MODE_OVERRIDE_UNLIT         = 1u << 5,
+    R3D_RENDER_MODE_OVERRIDE_PRIORITY      = 1u << 6,
+    R3D_RENDER_MODE_OVERRIDE_SHADOW        = 1u << 7,
+    R3D_RENDER_MODE_OVERRIDE_PASS          = 1u << 8,
+    R3D_RENDER_MODE_OVERRIDE_ALBEDO        = 1u << 9,
+    R3D_RENDER_MODE_OVERRIDE_WIRE_COLOR    = 1u << 10,
+    R3D_RENDER_MODE_OVERRIDE_DEPTH_WRITE   = 1u << 11,
+    R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE = 1u << 12,
 } R3D_RenderModeOverride;
+
+typedef enum R3D_RenderPass {
+    R3D_RENDER_PASS_DEFAULT,
+    R3D_RENDER_PASS_WIREFRAME,
+    R3D_RENDER_PASS_WIREFRAME_OVERLAY,
+    R3D_RENDER_PASS_DEPTH_ONLY,
+    R3D_RENDER_PASS_STENCIL_MASK,
+    R3D_RENDER_PASS_STENCIL_TEST,
+    R3D_RENDER_PASS_OVERLAY,
+} R3D_RenderPass;
 
 /**
  * Temporary render-state overrides.
@@ -77,6 +92,11 @@ typedef struct R3D_RenderMode {
     bool unlit;
     int priority;
     R3D_ShadowCastMode shadowCastMode;
+    R3D_RenderPass renderPass;
+    Color albedoColor;
+    Color wireColor;
+    bool depthWrite;
+    R3D_CompareMode depthCompare;
 } R3D_RenderMode;
 
 /**

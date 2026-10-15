@@ -34,6 +34,17 @@ extern "C" {
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildMultiply(void);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDoubleSided(void);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildShadowOnly(void);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildXRay(Color color, float opacity);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildOccludedOnly(Color color, float opacity);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildWireframe(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildWireframeOverlay(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildSilhouette(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildScreen(void);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildOverlay(void);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDepthOnly(void);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDitheredTransparency(float coverage);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildStencilMask(uint8_t reference);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildStencilTest(uint8_t reference);
 
 #ifdef __cplusplus
 }
