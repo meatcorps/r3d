@@ -33,8 +33,23 @@ extern "C" {
         R3D_BUILT_MODE_COLOR_MIX,
         R3D_BUILT_MODE_COLOR_ADD,
         R3D_BUILT_MODE_COLOR_SCREEN,
-        R3D_BUILT_MODE_EMISSION_COLOR
+        R3D_BUILT_MODE_EMISSION_COLOR,
+        R3D_BUILT_MODE_ALBEDO_TEXTURE,
+        R3D_BUILT_MODE_EMISSION_TEXTURE
     } R3D_BuiltRenderModeKind;
+
+    /*
+     * Texture-to-surface blending, not framebuffer blending.
+     * REPLACE ignores blendStrength and fully overrides the target RGB.
+     * Other modes use blendStrength and source texture alpha.
+     */
+    typedef enum R3D_TextureBlendMode {
+        R3D_TEXTURE_BLEND_REPLACE,
+        R3D_TEXTURE_BLEND_MULTIPLY,
+        R3D_TEXTURE_BLEND_MIX,
+        R3D_TEXTURE_BLEND_ADD,
+        R3D_TEXTURE_BLEND_SCREEN
+    } R3D_TextureBlendMode;
 
     typedef struct R3D_BuiltRenderMode {
         R3D_RenderMode mode;
@@ -59,6 +74,19 @@ extern "C" {
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorAdd(Color color);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorScreen(Color color);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionColor(Color color, float intensity);
+
+    /*
+     * Temporary texture layers.
+     * The texture is borrowed, not owned by the built mode.
+     * Color textures should be loaded in R3D's configured color space.
+     *
+     * blendStrength: 0..1, ignored by REPLACE.
+     * hdrIntensity: >=0, values above 1 are supported.
+     * Texture alpha masks non-REPLACE blend operations.
+     * Neither function changes material opacity.
+     */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildAlbedoTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength, float hdrIntensity);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

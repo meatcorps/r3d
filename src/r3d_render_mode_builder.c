@@ -218,6 +218,125 @@ R3D_BuiltRenderMode R3D_RenderModeBuildEmissionColor(Color color, float intensit
     return r3d_mode_build_color(color, R3D_BUILT_MODE_EMISSION_COLOR, 5, 1.0f, intensity);
 }
 
+/*
+ * Surface texture injection.
+ *
+ * effectTarget:
+ *   0 = ALBEDO
+ *   1 = EMISSION
+ *
+ * effectBlend matches R3D_TextureBlendMode.
+ *
+ * REPLACE overrides RGB directly. For the other blend modes,
+ * texture alpha controls how much of the texture layer is applied.
+ *
+ * Emission is never upper-clamped, preserving HDR values.
+ */
+static const char R3D_TEXTURE_EFFECT_SOURCE[] =
+    "uniform sampler2D effectTexture;\n"
+    "uniform vec3 effectTint = vec3(1.0);\n"
+    "uniform float effectStrength = 1.0;\n"
+    "uniform float effectIntensity = 1.0;\n"
+    "uniform int effectBlend = 0;\n"
+    "uniform int effectTarget = 0;\n"
+    "void fragment() {\n"
+    "    vec4 texel = texture(effectTexture, TEXCOORD);\n"
+    "    vec3 layer = texel.rgb * effectTint;\n"
+    "    float amount = clamp(effectStrength, 0.0, 1.0) * texel.a;\n"
+    "    if (effectTarget == 0) {\n"
+    "        vec3 base = ALBEDO;\n"
+    "        if (effectBlend == 0) {\n"
+    "            ALBEDO = layer;\n"
+    "        } else if (effectBlend == 1) {\n"
+    "            ALBEDO = mix(base, base * layer, amount);\n"
+    "        } else if (effectBlend == 2) {\n"
+    "            ALBEDO = mix(base, layer, amount);\n"
+    "        } else if (effectBlend == 3) {\n"
+    "            ALBEDO = clamp(base + layer * amount, 0.0, 1.0);\n"
+    "        } else if (effectBlend == 4) {\n"
+    "            vec3 a = clamp(base, 0.0, 1.0);\n"
+    "            vec3 b = clamp(layer, 0.0, 1.0);\n"
+    "            vec3 screened = 1.0 - (1.0 - a) * (1.0 - b);\n"
+    "            ALBEDO = mix(base, screened, amount);\n"
+    "        }\n"
+    "    } else {\n"
+    "        layer *= effectIntensity;\n"
+    "        vec3 base = EMISSION;\n"
+    "        if (effectBlend == 0) {\n"
+    "            EMISSION = layer;\n"
+    "        } else if (effectBlend == 1) {\n"
+    "            EMISSION = mix(base, base * layer, amount);\n"
+    "        } else if (effectBlend == 2) {\n"
+    "            EMISSION = mix(base, layer, amount);\n"
+    "        } else if (effectBlend == 3) {\n"
+    "            EMISSION = base + layer * amount;\n"
+    "        } else if (effectBlend == 4) {\n"
+    "            EMISSION = base + (1.0 - clamp(base, 0.0, 1.0))\n"
+    "                * layer * amount;\n"
+    "        }\n"
+    "    }\n"
+    "}\n";
+
+static R3D_BuiltRenderMode r3d_mode_build_texture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength, float hdrIntensity, bool emission)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    if (texture.id == 0)
+    {
+        TraceLog(LOG_WARNING, "R3D: Texture render mode requires a valid texture");
+        return built;
+    }
+
+    int operation = (int)blendMode;
+
+    if (operation < R3D_TEXTURE_BLEND_REPLACE ||
+        operation > R3D_TEXTURE_BLEND_SCREEN)
+    {
+        TraceLog(LOG_WARNING, "R3D: Invalid texture blend mode");
+        return built;
+    }
+
+    built.kind = emission
+        ? R3D_BUILT_MODE_EMISSION_TEXTURE
+        : R3D_BUILT_MODE_ALBEDO_TEXTURE;
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_TEXTURE_EFFECT_SOURCE);
+
+    if (!built.effect)
+        return built;
+
+    Vector3 linearTint = r3d_mode_color_linear(tint);
+
+    float strength = isfinite(blendStrength)
+        ? r3d_mode_clamp01(blendStrength)
+        : 0.0f;
+
+    float intensity = isfinite(hdrIntensity)
+        ? fmaxf(hdrIntensity, 0.0f)
+        : 0.0f;
+
+    int target = emission ? 1 : 0;
+
+    R3D_SetSurfaceEffectSampler(built.effect, "effectTexture", texture);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectTint", &linearTint);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectStrength", &strength);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectIntensity", &intensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectBlend", &operation);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectTarget", &target);
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildAlbedoTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength)
+{
+    return r3d_mode_build_texture(texture, blendMode, tint, blendStrength, 1.0f, false);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildEmissionTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength, float hdrIntensity)
+{
+    return r3d_mode_build_texture(texture, blendMode, tint, blendStrength, hdrIntensity, true);
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -569,6 +688,17 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
 
             Vector3 linearColor = r3d_mode_color_linear(color);
             R3D_SetSurfaceEffectUniform(built->effect, "effectColor", &linearColor);
+
+            return true;
+        }
+
+        case R3D_BUILT_MODE_ALBEDO_TEXTURE:
+        case R3D_BUILT_MODE_EMISSION_TEXTURE:
+        {
+            if (!built->effect) return false;
+
+            Vector3 linearTint = r3d_mode_color_linear(color);
+            R3D_SetSurfaceEffectUniform(built->effect, "effectTint", &linearTint);
 
             return true;
         }
