@@ -295,14 +295,21 @@ R3D_BuiltRenderMode R3D_RenderModeBuildStencilMask(uint8_t reference)
     built.mode.overrideMask =
         R3D_RENDER_MODE_OVERRIDE_PASS |
         R3D_RENDER_MODE_OVERRIDE_STENCIL |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_ENABLE |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_WRITE |
         R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE;
 
     built.mode.renderPass = R3D_RENDER_PASS_STENCIL_MASK;
     built.mode.depthCompare = R3D_COMPARE_ALWAYS;
 
+    built.mode.stencilEnabled = true;
+    built.mode.stencilWriteMask = 0xFF;
+
     built.mode.stencil.mode = R3D_COMPARE_ALWAYS;
     built.mode.stencil.ref = reference;
     built.mode.stencil.mask = 0xFF;
+    built.mode.stencil.opFail = R3D_STENCIL_KEEP;
+    built.mode.stencil.opZFail = R3D_STENCIL_KEEP;
     built.mode.stencil.opPass = R3D_STENCIL_REPLACE;
 
     return built;
@@ -315,10 +322,15 @@ R3D_BuiltRenderMode R3D_RenderModeBuildStencilTest(uint8_t reference)
     built.mode.overrideMask =
         R3D_RENDER_MODE_OVERRIDE_PASS |
         R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY |
-        R3D_RENDER_MODE_OVERRIDE_STENCIL;
+        R3D_RENDER_MODE_OVERRIDE_STENCIL |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_ENABLE |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_WRITE;
 
     built.mode.renderPass = R3D_RENDER_PASS_STENCIL_TEST;
     built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
+
+    built.mode.stencilEnabled = true;
+    built.mode.stencilWriteMask = 0x00;
 
     built.mode.stencil.mode = R3D_COMPARE_EQUAL;
     built.mode.stencil.ref = reference;
@@ -345,6 +357,40 @@ R3D_BuiltRenderMode R3D_RenderModeBuildOutline(Color color, float width, bool th
     built.mode.outlineColor = color;
     built.mode.outlineWidth = width;
     built.mode.outlineThroughWalls = throughWalls;
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildCustomBlend(
+    R3D_CustomBlendState state)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_CUSTOM_BLEND |
+        R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY;
+
+    built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
+    built.mode.customBlend = state;
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildCustomStencil(
+    R3D_StencilState state,
+    bool enabled,
+    uint8_t writeMask)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_STENCIL |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_ENABLE |
+        R3D_RENDER_MODE_OVERRIDE_STENCIL_WRITE;
+
+    built.mode.stencil = state;
+    built.mode.stencilEnabled = enabled;
+    built.mode.stencilWriteMask = writeMask;
 
     return built;
 }

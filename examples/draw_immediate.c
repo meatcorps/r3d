@@ -71,6 +71,20 @@ int main(void) {
     UnloadImage(redImage);
     UnloadImage(blueImage);
 
+    R3D_CustomBlendState blend = {
+        .equationRGB = R3D_BLEND_EQUATION_REVERSE_SUBTRACT,
+        .equationAlpha = R3D_BLEND_EQUATION_ADD,
+
+        .srcRGB = R3D_BLEND_FACTOR_SRC_ALPHA,
+        .dstRGB = R3D_BLEND_FACTOR_ONE,
+
+        .srcAlpha = R3D_BLEND_FACTOR_ONE,
+        .dstAlpha = R3D_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+    };
+
+    R3D_BuiltRenderMode custom =
+    R3D_RenderModeBuildCustomBlend(blend);
+
     R3D_SetSurfaceShaderSampler(materialShader, "noiseTexture", whiteTexture);
     R3D_SetSurfaceEffectSampler(effectA, "noiseTexture", redTexture);
     R3D_SetSurfaceEffectSampler(effectB, "noiseTexture", blueTexture);
@@ -78,6 +92,21 @@ int main(void) {
     float effectStrength = 0.5f;
     R3D_SetSurfaceEffectUniform(effectA, "strength", &effectStrength);
     R3D_SetSurfaceEffectUniform(effectB, "strength", &effectStrength);
+
+    R3D_StencilState stencil = {
+        .mode = R3D_COMPARE_EQUAL,
+        .ref = 1,
+        .mask = 0xFF,
+        .opFail = R3D_STENCIL_KEEP,
+        .opZFail = R3D_STENCIL_KEEP,
+        .opPass = R3D_STENCIL_KEEP
+    };
+
+    R3D_BuiltRenderMode test =
+        R3D_RenderModeBuildStencilTest(1);
+
+    R3D_BuiltRenderMode custom2 =
+        R3D_RenderModeBuildCustomStencil(stencil, true, 0x00);
 
     // Setup camera
     Camera3D camera = {
@@ -178,7 +207,13 @@ int main(void) {
 
             // Back to original.
             R3D_PopRenderMode();
-            R3D_DrawAnimatedModel(model, modelPlayer, (Vector3){3, 0, 0}, 1.0f);
+            R3D_PushBuiltRenderMode(custom);
+            R3D_DrawAnimatedModel(model, modelPlayer, (Vector3){-2, 0, 0}, 1.0f);
+            R3D_PopBuiltRenderMode();
+            R3D_PushBuiltRenderMode(custom2);
+            R3D_DrawAnimatedModel(model, modelPlayer, (Vector3){-3, 0, 0}, 1.0f);
+            R3D_PopBuiltRenderMode();
+            R3D_DrawAnimatedModel(model, modelPlayer, (Vector3){-4, 0, 0}, 1.0f);
         }
 
         R3D_End();
@@ -200,6 +235,8 @@ int main(void) {
     UnloadTexture(whiteTexture);
     UnloadTexture(redTexture);
     UnloadTexture(blueTexture);
+    R3D_UnloadBuiltRenderMode(&custom);
+    R3D_UnloadBuiltRenderMode(&custom2);
     R3D_Close();
 
     CloseWindow();

@@ -111,6 +111,11 @@ void r3d_driver_set_blend_func_separate(GLenum equation, GLenum srcRGB, GLenum d
  */
 void r3d_driver_set_blend_func(GLenum equation, GLenum srcFactor, GLenum dstFactor);
 
+/**
+ * Applies independently configured RGB/alpha blend operations.
+ */
+void r3d_driver_set_custom_blend_state(R3D_CustomBlendState state);
+
 /*
  * Applies the given depth state.
  * Assumes that GL_DEPTH_TEST is already enabled.

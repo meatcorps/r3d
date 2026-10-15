@@ -1847,6 +1847,40 @@ void raster_depth_cube(const r3d_render_call_t* call, const Matrix* viewProj, co
     }
 }
 
+static void apply_mesh_blend_state(const r3d_render_call_t* call)
+{
+    if (call->mesh.customBlendOverride)
+    {
+        r3d_driver_set_custom_blend_state(call->mesh.customBlend);
+    }
+    else
+    {
+        r3d_driver_set_blend_mode(call->mesh.material.blendMode);
+    }
+}
+
+static void apply_mesh_stencil_state(
+    const r3d_render_call_t* call,
+    bool defaultEnabled,
+    uint8_t defaultWriteMask)
+{
+    const bool enabled = call->mesh.stencilEnableOverride
+        ? call->mesh.stencilEnabled
+        : defaultEnabled;
+
+    const uint8_t writeMask = call->mesh.stencilWriteOverride
+        ? call->mesh.stencilWriteMask
+        : defaultWriteMask;
+
+    if (enabled)
+        r3d_driver_enable(GL_STENCIL_TEST);
+    else
+        r3d_driver_disable(GL_STENCIL_TEST);
+
+    r3d_driver_set_stencil_state(call->mesh.material.stencil);
+    r3d_driver_set_stencil_mask(writeMask);
+}
+
 void raster_probe_forward(const r3d_render_call_t* call, const r3d_env_probe_job_t* job, int face, bool opaque)
 {
     R3D_ASSERT(call->type == R3D_RENDER_CALL_MESH); //< Paranoid assert, should be fine
@@ -1939,8 +1973,8 @@ void raster_probe_forward(const r3d_render_call_t* call, const r3d_env_probe_job
     /* --- Applying material parameters that are independent of shaders --- */
 
     r3d_driver_set_depth_state(material->depth);
-    r3d_driver_set_stencil_state(material->stencil);
-    r3d_driver_set_blend_mode(material->blendMode);
+    apply_mesh_stencil_state(call, true, 0xFF);
+    apply_mesh_blend_state(call);
     r3d_driver_set_cull_mode(material->cullMode);
 
     /* --- Rendering the object corresponding to the draw call --- */
@@ -2031,8 +2065,8 @@ void raster_probe_unlit(const r3d_render_call_t* call, const r3d_env_probe_job_t
     /* --- Applying material parameters that are independent of shaders --- */
 
     r3d_driver_set_depth_state(material->depth);
-    r3d_driver_set_stencil_state(material->stencil);
-    r3d_driver_set_blend_mode(material->blendMode);
+    apply_mesh_stencil_state(call, true, 0xFF);
+    apply_mesh_blend_state(call);
     r3d_driver_set_cull_mode(material->cullMode);
 
     /* --- Rendering the object corresponding to the draw call --- */
@@ -2130,7 +2164,7 @@ void raster_geometry(const r3d_render_call_t* call)
 
     r3d_driver_set_cull_mode(material->cullMode);
     r3d_driver_set_depth_state(material->depth);
-    r3d_driver_set_stencil_state(material->stencil);
+    apply_mesh_stencil_state(call, true, 0xFF);
 
     /* --- Rendering the object corresponding to the draw call --- */
 
@@ -2303,8 +2337,14 @@ void raster_forward(const r3d_render_call_t* call)
     /* --- Applying material parameters that are independent of shaders --- */
 
     r3d_driver_set_depth_state(material->depth);
-    r3d_driver_set_stencil_state(material->stencil);
-    r3d_driver_set_blend_mode(material->blendMode);
+
+    const uint8_t defaultStencilWrite =
+        call->mesh.renderPass == R3D_RENDER_PASS_STENCIL_TEST
+            ? 0x00 : 0xFF;
+
+    apply_mesh_stencil_state(call, true, defaultStencilWrite);
+    apply_mesh_blend_state(call);
+
     r3d_driver_set_cull_mode(material->cullMode);
 
     /* --- Rendering the object corresponding to the draw call --- */
@@ -2416,8 +2456,23 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireC
     }
 
     r3d_driver_set_depth_state(depth);
-    r3d_driver_set_stencil_state(material->stencil);
-    if (!opaque) r3d_driver_set_blend_mode(material->blendMode);
+
+    const bool defaultStencilEnabled =
+        call->mesh.renderPass != R3D_RENDER_PASS_DEPTH_ONLY &&
+        call->mesh.renderPass != R3D_RENDER_PASS_OUTLINE;
+
+    const uint8_t defaultStencilWrite =
+        (!defaultStencilEnabled ||
+         call->mesh.renderPass == R3D_RENDER_PASS_STENCIL_TEST)
+            ? 0x00 : 0xFF;
+
+    apply_mesh_stencil_state(
+        call, defaultStencilEnabled, defaultStencilWrite
+    );
+
+    if (!opaque)
+        apply_mesh_blend_state(call);
+
     r3d_driver_set_cull_mode(material->cullMode);
 
     /* --- Rendering the object corresponding to the draw call --- */

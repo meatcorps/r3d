@@ -123,6 +123,51 @@ typedef enum R3D_BlendMode {
 } R3D_BlendMode;
 
 /**
+ * Custom blend equations.
+ * RGB and alpha can use different equations.
+ */
+typedef enum R3D_BlendEquation {
+    R3D_BLEND_EQUATION_ADD,
+    R3D_BLEND_EQUATION_SUBTRACT,
+    R3D_BLEND_EQUATION_REVERSE_SUBTRACT,
+    R3D_BLEND_EQUATION_MIN,
+    R3D_BLEND_EQUATION_MAX
+} R3D_BlendEquation;
+
+/**
+ * Custom blend factors.
+ */
+typedef enum R3D_BlendFactor {
+    R3D_BLEND_FACTOR_ZERO,
+    R3D_BLEND_FACTOR_ONE,
+    R3D_BLEND_FACTOR_SRC_COLOR,
+    R3D_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+    R3D_BLEND_FACTOR_DST_COLOR,
+    R3D_BLEND_FACTOR_ONE_MINUS_DST_COLOR,
+    R3D_BLEND_FACTOR_SRC_ALPHA,
+    R3D_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    R3D_BLEND_FACTOR_DST_ALPHA,
+    R3D_BLEND_FACTOR_ONE_MINUS_DST_ALPHA
+} R3D_BlendFactor;
+
+/**
+ * Complete custom RGB/alpha blending configuration.
+ *
+ * Used in the forward blending path.
+ * MIN and MAX equations ignore blend factors, as defined by OpenGL.
+ */
+typedef struct R3D_CustomBlendState {
+    R3D_BlendEquation equationRGB;
+    R3D_BlendEquation equationAlpha;
+
+    R3D_BlendFactor srcRGB;
+    R3D_BlendFactor dstRGB;
+
+    R3D_BlendFactor srcAlpha;
+    R3D_BlendFactor dstAlpha;
+} R3D_CustomBlendState;
+
+/**
  * @brief Comparison modes.
  *
  * Defines how fragments are tested against the depth/stencil buffer during rendering.

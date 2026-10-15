@@ -105,6 +105,7 @@ typedef struct {
     pipeline_entry_t stencilOpZFail;
     pipeline_entry_t stencilOpZPass;
     pipeline_entry_t blendEquation;
+    pipeline_entry_t blendEquationAlpha;
     pipeline_entry_t blendSrcFactor;
     pipeline_entry_t blendDstFactor;
     pipeline_entry_t blendSrcAlpha;
@@ -374,44 +375,141 @@ void r3d_driver_set_stencil_mask(uint8_t mask)
     }
 }
 
-void r3d_driver_set_blend_func_separate(GLenum equation, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha)
+static void r3d_driver_set_blend_equations(GLenum rgb, GLenum alpha)
 {
-    if (CHECK_PIPE(blendEquation, enum, equation))
+    if (CHECK_PIPE(blendEquation, enum, rgb) ||
+        CHECK_PIPE(blendEquationAlpha, enum, alpha))
     {
-        SET_PIPE(blendEquation, enum, equation);
-        glBlendEquation(equation);
-    }
+        SET_PIPE(blendEquation, enum, rgb);
+        SET_PIPE(blendEquationAlpha, enum, alpha);
 
-    bool rgbDirty   = CHECK_PIPE(blendSrcFactor, enum, srcRGB)   || CHECK_PIPE(blendDstFactor, enum, dstRGB);
-    bool alphaDirty = CHECK_PIPE(blendSrcAlpha,  enum, srcAlpha) || CHECK_PIPE(blendDstAlpha,  enum, dstAlpha);
+        glBlendEquationSeparate(rgb, alpha);
+    }
+}
+
+static void r3d_driver_set_blend_factors(
+    GLenum srcRGB, GLenum dstRGB,
+    GLenum srcAlpha, GLenum dstAlpha)
+{
+    bool rgbDirty =
+        CHECK_PIPE(blendSrcFactor, enum, srcRGB) ||
+        CHECK_PIPE(blendDstFactor, enum, dstRGB);
+
+    bool alphaDirty =
+        CHECK_PIPE(blendSrcAlpha, enum, srcAlpha) ||
+        CHECK_PIPE(blendDstAlpha, enum, dstAlpha);
 
     if (rgbDirty || alphaDirty)
     {
         SET_PIPE(blendSrcFactor, enum, srcRGB);
         SET_PIPE(blendDstFactor, enum, dstRGB);
-        SET_PIPE(blendSrcAlpha,  enum, srcAlpha);
-        SET_PIPE(blendDstAlpha,  enum, dstAlpha);
+        SET_PIPE(blendSrcAlpha, enum, srcAlpha);
+        SET_PIPE(blendDstAlpha, enum, dstAlpha);
+
         glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
     }
 }
 
-void r3d_driver_set_blend_func(GLenum equation, GLenum srcFactor, GLenum dstFactor)
+void r3d_driver_set_blend_func_separate(
+    GLenum equation,
+    GLenum srcRGB, GLenum dstRGB,
+    GLenum srcAlpha, GLenum dstAlpha)
 {
-    if (CHECK_PIPE(blendEquation, enum, equation))
-    {
-        SET_PIPE(blendEquation, enum, equation);
-        glBlendEquation(equation);
-    }
+    r3d_driver_set_blend_equations(equation, equation);
 
-    if (CHECK_PIPE(blendSrcFactor, enum, srcFactor) || CHECK_PIPE(blendDstFactor, enum, dstFactor)
-    ||  CHECK_PIPE(blendSrcAlpha,  enum, srcFactor) || CHECK_PIPE(blendDstAlpha,  enum, dstFactor))
+    r3d_driver_set_blend_factors(
+        srcRGB, dstRGB, srcAlpha, dstAlpha
+    );
+}
+
+void r3d_driver_set_blend_func(
+    GLenum equation, GLenum srcFactor, GLenum dstFactor)
+{
+    r3d_driver_set_blend_func_separate(
+        equation,
+        srcFactor, dstFactor,
+        srcFactor, dstFactor
+    );
+}
+
+static GLenum r3d_driver_blend_equation_gl(R3D_BlendEquation equation)
+{
+    switch (equation)
     {
-        SET_PIPE(blendSrcFactor, enum, srcFactor);
-        SET_PIPE(blendDstFactor, enum, dstFactor);
-        SET_PIPE(blendSrcAlpha,  enum, srcFactor);
-        SET_PIPE(blendDstAlpha,  enum, dstFactor);
-        glBlendFunc(srcFactor, dstFactor);
+    case R3D_BLEND_EQUATION_ADD:
+        return GL_FUNC_ADD;
+
+    case R3D_BLEND_EQUATION_SUBTRACT:
+        return GL_FUNC_SUBTRACT;
+
+    case R3D_BLEND_EQUATION_REVERSE_SUBTRACT:
+        return GL_FUNC_REVERSE_SUBTRACT;
+
+    case R3D_BLEND_EQUATION_MIN:
+        return GL_MIN;
+
+    case R3D_BLEND_EQUATION_MAX:
+        return GL_MAX;
+
+    default:
+        R3D_ASSERT(false && "Invalid blend equation");
+        return GL_FUNC_ADD;
     }
+}
+
+static GLenum r3d_driver_blend_factor_gl(R3D_BlendFactor factor)
+{
+    switch (factor)
+    {
+    case R3D_BLEND_FACTOR_ZERO:
+        return GL_ZERO;
+
+    case R3D_BLEND_FACTOR_ONE:
+        return GL_ONE;
+
+    case R3D_BLEND_FACTOR_SRC_COLOR:
+        return GL_SRC_COLOR;
+
+    case R3D_BLEND_FACTOR_ONE_MINUS_SRC_COLOR:
+        return GL_ONE_MINUS_SRC_COLOR;
+
+    case R3D_BLEND_FACTOR_DST_COLOR:
+        return GL_DST_COLOR;
+
+    case R3D_BLEND_FACTOR_ONE_MINUS_DST_COLOR:
+        return GL_ONE_MINUS_DST_COLOR;
+
+    case R3D_BLEND_FACTOR_SRC_ALPHA:
+        return GL_SRC_ALPHA;
+
+    case R3D_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA:
+        return GL_ONE_MINUS_SRC_ALPHA;
+
+    case R3D_BLEND_FACTOR_DST_ALPHA:
+        return GL_DST_ALPHA;
+
+    case R3D_BLEND_FACTOR_ONE_MINUS_DST_ALPHA:
+        return GL_ONE_MINUS_DST_ALPHA;
+
+    default:
+        R3D_ASSERT(false && "Invalid blend factor");
+        return GL_ONE;
+    }
+}
+
+void r3d_driver_set_custom_blend_state(R3D_CustomBlendState state)
+{
+    r3d_driver_set_blend_equations(
+        r3d_driver_blend_equation_gl(state.equationRGB),
+        r3d_driver_blend_equation_gl(state.equationAlpha)
+    );
+
+    r3d_driver_set_blend_factors(
+        r3d_driver_blend_factor_gl(state.srcRGB),
+        r3d_driver_blend_factor_gl(state.dstRGB),
+        r3d_driver_blend_factor_gl(state.srcAlpha),
+        r3d_driver_blend_factor_gl(state.dstAlpha)
+    );
 }
 
 void r3d_driver_set_depth_state(R3D_DepthState state)

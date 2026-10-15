@@ -268,6 +268,15 @@ typedef struct {
 
     bool depthWriteOverride;
     bool depthWrite;
+
+    bool customBlendOverride;
+    R3D_CustomBlendState customBlend;
+
+    bool stencilEnableOverride;
+    bool stencilEnabled;
+
+    bool stencilWriteOverride;
+    uint8_t stencilWriteMask;
 } r3d_render_call_mesh_t;
 
 /*

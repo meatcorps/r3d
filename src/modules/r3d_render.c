@@ -1414,7 +1414,20 @@ void r3d_render_mode_push(R3D_RenderMode mode)
         effective.transparencyMode = mode.transparencyMode;
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_BLEND)
+    {
         effective.blendMode = mode.blendMode;
+
+        // An inner preset replaces an outer custom blend.
+        effective.overrideMask &= ~R3D_RENDER_MODE_OVERRIDE_CUSTOM_BLEND;
+    }
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_CUSTOM_BLEND)
+    {
+        effective.customBlend = mode.customBlend;
+
+        // An inner custom blend replaces an outer preset.
+        effective.overrideMask &= ~R3D_RENDER_MODE_OVERRIDE_BLEND;
+    }
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_CULL)
         effective.cullMode = mode.cullMode;
@@ -1432,6 +1445,12 @@ void r3d_render_mode_push(R3D_RenderMode mode)
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
         effective.stencil = mode.stencil;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_STENCIL_ENABLE)
+        effective.stencilEnabled = mode.stencilEnabled;
+
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_STENCIL_WRITE)
+        effective.stencilWriteMask = mode.stencilWriteMask;
 
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_UNLIT)
         effective.unlit = mode.unlit;
@@ -1488,6 +1507,12 @@ static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mod
     if (mask & R3D_RENDER_MODE_OVERRIDE_BLEND)
         material->blendMode = mode->blendMode;
 
+    if (mask & R3D_RENDER_MODE_OVERRIDE_CUSTOM_BLEND)
+    {
+        call->mesh.customBlendOverride = true;
+        call->mesh.customBlend = mode->customBlend;
+    }
+
     if (mask & R3D_RENDER_MODE_OVERRIDE_CULL)
         material->cullMode = mode->cullMode;
 
@@ -1499,6 +1524,18 @@ static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mod
 
     if (mask & R3D_RENDER_MODE_OVERRIDE_STENCIL)
         material->stencil = mode->stencil;
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_STENCIL_ENABLE)
+    {
+        call->mesh.stencilEnableOverride = true;
+        call->mesh.stencilEnabled = mode->stencilEnabled;
+    }
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_STENCIL_WRITE)
+    {
+        call->mesh.stencilWriteOverride = true;
+        call->mesh.stencilWriteMask = mode->stencilWriteMask;
+    }
 
     if (mask & R3D_RENDER_MODE_OVERRIDE_UNLIT)
         material->unlit = mode->unlit;
