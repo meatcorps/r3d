@@ -30,6 +30,8 @@ typedef enum {
     R3D_TARGET_NORMAL,          //< Full - Mip 2 - RG16
     R3D_TARGET_GEOM_NORMAL,     //< Full - Mip 1 - RG16
     R3D_TARGET_ORM,             //< Full - Mip 1 - RGBA8
+    R3D_TARGET_OUTLINE_MASK,    //< Full - Mip 1 - RGBA8
+    R3D_TARGET_OUTLINE_HORIZONTAL, //< Full - Mip 1 - RGBA8
     R3D_TARGET_DEPTH,           //< Full - Mip N - R16F
     R3D_TARGET_SELECTOR,        //< Half - Mip N - R8UI
     R3D_TARGET_RADIANCE,        //< Full - Mip 2 - RGB16F

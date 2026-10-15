@@ -63,6 +63,7 @@ typedef enum R3D_RenderModeOverride {
     R3D_RENDER_MODE_OVERRIDE_WIRE_COLOR    = 1u << 10,
     R3D_RENDER_MODE_OVERRIDE_DEPTH_WRITE   = 1u << 11,
     R3D_RENDER_MODE_OVERRIDE_DEPTH_COMPARE = 1u << 12,
+    R3D_RENDER_MODE_OVERRIDE_OUTLINE = 1u << 13,
 } R3D_RenderModeOverride;
 
 typedef enum R3D_RenderPass {
@@ -73,6 +74,7 @@ typedef enum R3D_RenderPass {
     R3D_RENDER_PASS_STENCIL_MASK,
     R3D_RENDER_PASS_STENCIL_TEST,
     R3D_RENDER_PASS_OVERLAY,
+    R3D_RENDER_PASS_OUTLINE,
 } R3D_RenderPass;
 
 /**
@@ -97,6 +99,10 @@ typedef struct R3D_RenderMode {
     Color wireColor;
     bool depthWrite;
     R3D_CompareMode depthCompare;
+
+    Color outlineColor;
+    float outlineWidth;
+    bool outlineThroughWalls;
 } R3D_RenderMode;
 
 /**

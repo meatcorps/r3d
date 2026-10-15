@@ -89,6 +89,20 @@ R3D_BuiltRenderMode R3D_RenderModeBuildDoubleSided(void)
     return built;
 }
 
+R3D_BuiltRenderMode R3D_RenderModeBuildShadowOnly(void)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_SHADOW |
+        R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY;
+
+    built.mode.shadowCastMode = R3D_SHADOW_CAST_ONLY_AUTO;
+    built.mode.transparencyMode = R3D_TRANSPARENCY_OPAQUE;
+
+    return built;
+}
+
 static float r3d_mode_clamp01(float value)
 {
     if (value < 0.0f) return 0.0f;
@@ -312,6 +326,25 @@ R3D_BuiltRenderMode R3D_RenderModeBuildStencilTest(uint8_t reference)
     built.mode.stencil.opFail = R3D_STENCIL_KEEP;
     built.mode.stencil.opZFail = R3D_STENCIL_KEEP;
     built.mode.stencil.opPass = R3D_STENCIL_KEEP;
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildOutline(Color color, float width, bool throughWalls)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    if (width < 1.0f) width = 1.0f;
+    if (width > 12.0f) width = 12.0f;
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_PASS |
+        R3D_RENDER_MODE_OVERRIDE_OUTLINE;
+
+    built.mode.renderPass = R3D_RENDER_PASS_OUTLINE;
+    built.mode.outlineColor = color;
+    built.mode.outlineWidth = width;
+    built.mode.outlineThroughWalls = throughWalls;
 
     return built;
 }

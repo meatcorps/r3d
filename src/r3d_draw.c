@@ -34,6 +34,142 @@
 #include "./modules/r3d_light.h"
 #include "./modules/r3d_env.h"
 
+#define R3D_OUTLINE_MAX_RADIUS 12
+
+static const char* R3D_OUTLINE_VERTEX =
+    "#version 330 core\n"
+    "void main()\n"
+    "{\n"
+    "    vec2 p = vec2(float((gl_VertexID << 1) & 2),\n"
+    "                  float(gl_VertexID & 2));\n"
+    "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+
+static const char* R3D_OUTLINE_HORIZONTAL_FRAGMENT =
+    "#version 330 core\n"
+    "uniform sampler2D uMask;\n"
+    "out vec4 fragColor;\n"
+    "void main()\n"
+    "{\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    ivec2 limit = textureSize(uMask, 0) - ivec2(1);\n"
+    "    float bestReach = -1.0;\n"
+    "    vec3 bestColor = vec3(0.0);\n"
+    "    for (int dx = -12; dx <= 12; ++dx)\n"
+    "    {\n"
+    "        ivec2 q = clamp(p + ivec2(dx, 0), ivec2(0), limit);\n"
+    "        vec4 sampleValue = texelFetch(uMask, q, 0);\n"
+    "        float radius = sampleValue.a * 12.0;\n"
+    "        if (radius <= 0.0 || abs(float(dx)) > radius) continue;\n"
+    "        float reach = sqrt(max(radius * radius - float(dx * dx), 0.0));\n"
+    "        if (reach > bestReach)\n"
+    "        {\n"
+    "            bestReach = reach;\n"
+    "            bestColor = sampleValue.rgb;\n"
+    "        }\n"
+    "    }\n"
+    "    if (bestReach < 0.0) discard;\n"
+    "    fragColor = vec4(bestColor, min((bestReach + 0.5) / 12.0, 1.0));\n"
+    "}\n";
+
+static const char* R3D_OUTLINE_COMPOSITE_FRAGMENT =
+    "#version 330 core\n"
+    "uniform sampler2D uMask;\n"
+    "uniform sampler2D uHorizontal;\n"
+    "out vec4 fragColor;\n"
+    "void main()\n"
+    "{\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    if (texelFetch(uMask, p, 0).a > 0.0) discard;\n"
+    "    ivec2 limit = textureSize(uHorizontal, 0) - ivec2(1);\n"
+    "    float best = -1.0;\n"
+    "    vec3 bestColor = vec3(0.0);\n"
+    "    for (int dy = -12; dy <= 12; ++dy)\n"
+    "    {\n"
+    "        ivec2 q = clamp(p + ivec2(0, dy), ivec2(0), limit);\n"
+    "        vec4 sampleValue = texelFetch(uHorizontal, q, 0);\n"
+    "        float reach = sampleValue.a * 12.0 - abs(float(dy));\n"
+    "        if (sampleValue.a > 0.0 && reach >= 0.0 && reach > best)\n"
+    "        {\n"
+    "            best = reach;\n"
+    "            bestColor = sampleValue.rgb;\n"
+    "        }\n"
+    "    }\n"
+    "    if (best < 0.0) discard;\n"
+    "    fragColor = vec4(bestColor, 1.0);\n"
+    "}\n";
+
+static GLuint r3d_outline_compile_stage(GLenum type, const char* source)
+{
+    GLuint shader = glCreateShader(type);
+    if (!shader) return 0;
+
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+
+    GLint compiled = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+
+    if (!compiled)
+    {
+        char log[1024] = {0};
+        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+        TraceLog(LOG_ERROR, "R3D outline shader: %s", log);
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    return shader;
+}
+
+static GLuint r3d_outline_create_program(const char* fragment)
+{
+    GLuint vertex = r3d_outline_compile_stage(
+        GL_VERTEX_SHADER, R3D_OUTLINE_VERTEX
+    );
+
+    GLuint pixel = r3d_outline_compile_stage(
+        GL_FRAGMENT_SHADER, fragment
+    );
+
+    if (!vertex || !pixel)
+    {
+        if (vertex) glDeleteShader(vertex);
+        if (pixel) glDeleteShader(pixel);
+        return 0;
+    }
+
+    GLuint program = glCreateProgram();
+
+    if (!program)
+    {
+        glDeleteShader(vertex);
+        glDeleteShader(pixel);
+        return 0;
+    }
+
+    glAttachShader(program, vertex);
+    glAttachShader(program, pixel);
+    glLinkProgram(program);
+
+    glDeleteShader(vertex);
+    glDeleteShader(pixel);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+
+    if (!linked)
+    {
+        char log[1024] = {0};
+        glGetProgramInfoLog(program, sizeof(log), NULL, log);
+        TraceLog(LOG_ERROR, "R3D outline program: %s", log);
+        glDeleteProgram(program);
+        return 0;
+    }
+
+    return program;
+}
+
 // ========================================
 // HELPER MACROS
 // ========================================
@@ -101,6 +237,7 @@ static void pass_deferred_volumetric_fog(r3d_target_t sceneTarget);
 
 static void pass_scene_forward(r3d_target_t sceneTarget);
 static void pass_scene_background(r3d_target_t sceneTarget);
+static void pass_scene_outlines(r3d_target_t sceneTarget);
 
 static r3d_target_t pass_post_setup(r3d_target_t sceneTarget);
 static r3d_target_t pass_post_dof(r3d_target_t sceneTarget);
@@ -647,6 +784,7 @@ void R3D_End(void)
     }
 
     pass_scene_forward(sceneTarget);
+    pass_scene_outlines(sceneTarget);
 
     /* --- Applying effects over the scene and final blit --- */
 
@@ -2267,6 +2405,16 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireC
         depth.offsetUnits = -1.0f;
     }
 
+    if (wireColor && call->mesh.renderPass == R3D_RENDER_PASS_OUTLINE)
+    {
+        depth.mode = call->mesh.outlineThroughWalls
+            ? R3D_COMPARE_ALWAYS
+            : R3D_COMPARE_LEQUAL;
+
+        depth.offsetFactor = 0.0f;
+        depth.offsetUnits = 0.0f;
+    }
+
     r3d_driver_set_depth_state(depth);
     r3d_driver_set_stencil_state(material->stencil);
     if (!opaque) r3d_driver_set_blend_mode(material->blendMode);
@@ -3216,6 +3364,134 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     r3d_driver_set_depth_mask(GL_TRUE);
     r3d_driver_set_depth_offset(0.0f, 0.0f);
     r3d_driver_set_depth_range(0.0f, 1.0f);
+}
+
+static void pass_scene_outlines(r3d_target_t sceneTarget)
+{
+    if (R3D_LIST_EMPTY(R3D_MOD_RENDER.list[R3D_RENDER_LIST_OUTLINE]))
+        return;
+
+    /* Compile the two reusable programs on first use. */
+
+    if (!R3D_MOD_RENDER.outlineHorizontalProgram)
+    {
+        R3D_MOD_RENDER.outlineHorizontalProgram =
+            r3d_outline_create_program(R3D_OUTLINE_HORIZONTAL_FRAGMENT);
+    }
+
+    if (!R3D_MOD_RENDER.outlineCompositeProgram)
+    {
+        R3D_MOD_RENDER.outlineCompositeProgram =
+            r3d_outline_create_program(R3D_OUTLINE_COMPOSITE_FRAGMENT);
+    }
+
+    if (!R3D_MOD_RENDER.outlineHorizontalProgram ||
+        !R3D_MOD_RENDER.outlineCompositeProgram)
+    {
+        return;
+    }
+
+    /* --- Pass 1: render the outlined models into a color mask. --- */
+
+    R3D_TARGET_BIND_CLEAR(0, false, R3D_TARGET_OUTLINE_MASK);
+    R3D_TARGET_BIND_LOAD(0, true, R3D_TARGET_OUTLINE_MASK);
+
+    r3d_driver_disable(GL_BLEND);
+    r3d_driver_disable(GL_STENCIL_TEST);
+    r3d_driver_enable(GL_DEPTH_TEST);
+    r3d_driver_set_depth_mask(GL_FALSE);
+
+    R3D_RENDER_FOR_EACH(
+        call,
+        IS_MESH_VISIBLE_CAMERA(call->mesh.instance) &&
+        !IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode),
+        &R3D.viewState.frustum,
+        R3D_RENDER_LIST_OUTLINE
+    )
+    {
+        float width = call->mesh.outlineWidth;
+
+        if (width < 1.0f) width = 1.0f;
+        if (width > 12.0f) width = 12.0f;
+
+        Color maskColor = call->mesh.outlineColor;
+
+        // Encode the pixel width in the mask alpha channel.
+        maskColor.a = (unsigned char)(width * (255.0f / 12.0f) + 0.5f);
+
+        // Reuse the actual draw call, transform, skinning and instancing.
+        raster_unlit(call, false, &maskColor);
+    }
+
+    /* --- Pass 2: horizontal dilation with remaining vertical radius. --- */
+
+    r3d_driver_disable(GL_DEPTH_TEST);
+    r3d_driver_disable(GL_BLEND);
+
+    R3D_TARGET_BIND_CLEAR(0, false, R3D_TARGET_OUTLINE_HORIZONTAL);
+
+    glUseProgram(R3D_MOD_RENDER.outlineHorizontalProgram);
+
+    glUniform1i(
+        glGetUniformLocation(
+            R3D_MOD_RENDER.outlineHorizontalProgram, "uMask"
+        ),
+        R3D_SHADER_SAMPLER_SOURCE_2D_0
+    );
+
+    r3d_shader_bind_sampler(
+        R3D_SHADER_SAMPLER_SOURCE_2D_0,
+        r3d_target_get(R3D_TARGET_OUTLINE_MASK)
+    );
+
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    /* --- Pass 3: vertical dilation and composite onto the PBR scene. --- */
+
+    R3D_TARGET_BIND_LOAD(0, false, sceneTarget);
+
+    r3d_driver_enable(GL_BLEND);
+
+    r3d_driver_set_blend_func_separate(
+        GL_FUNC_ADD,
+        GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+        GL_ONE, GL_ONE_MINUS_SRC_ALPHA
+    );
+
+    glUseProgram(R3D_MOD_RENDER.outlineCompositeProgram);
+
+    glUniform1i(
+        glGetUniformLocation(
+            R3D_MOD_RENDER.outlineCompositeProgram, "uMask"
+        ),
+        R3D_SHADER_SAMPLER_SOURCE_2D_0
+    );
+
+    glUniform1i(
+        glGetUniformLocation(
+            R3D_MOD_RENDER.outlineCompositeProgram, "uHorizontal"
+        ),
+        R3D_SHADER_SAMPLER_SOURCE_2D_1
+    );
+
+    r3d_shader_bind_sampler(
+        R3D_SHADER_SAMPLER_SOURCE_2D_0,
+        r3d_target_get(R3D_TARGET_OUTLINE_MASK)
+    );
+
+    r3d_shader_bind_sampler(
+        R3D_SHADER_SAMPLER_SOURCE_2D_1,
+        r3d_target_get(R3D_TARGET_OUTLINE_HORIZONTAL)
+    );
+
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    /* Restore R3D's shader cache and the relevant pipeline state. */
+
+    R3D_MOD_SHADER.currentProgram = 0;
+
+    r3d_driver_disable(GL_BLEND);
+    r3d_driver_set_depth_mask(GL_TRUE);
 }
 
 void pass_scene_background(r3d_target_t sceneTarget)

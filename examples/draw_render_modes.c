@@ -25,6 +25,7 @@ typedef enum {
     MODE_DITHERED,
     MODE_STENCIL,
     MODE_SHADOW_ONLY,
+    MODE_OUTLINE,
     MODE_COUNT
 } DemoMode;
 
@@ -45,7 +46,8 @@ static const char* modeNames[MODE_COUNT] = {
     "DEPTH ONLY",
     "DITHERED TRANSPARENCY",
     "STENCIL / MASK",
-    "SHADOW ONLY"
+    "SHADOW ONLY",
+    "OUTLINE"
 };
 
 static const char* modeDescriptions[MODE_COUNT] = {
@@ -65,12 +67,13 @@ static const char* modeDescriptions[MODE_COUNT] = {
     "The invisible subject writes depth, occluding geometry behind it.",
     "Opaque rendering with a 4x4 screen-space coverage pattern.",
     "The subject is only visible inside the invisible mask.",
-    "The invisible subject continues to cast shadows."
+    "The invisible subject continues to cast shadows.",
+    "A crisp screen-space selection outline with constant pixel thickness."
 };
 
 static void setup_environment(void)
 {
-    R3D_SetAntiAliasingMode(R3D_ANTI_ALIASING_MODE_SMAA);
+    R3D_SetAntiAliasingMode(R3D_ANTI_ALIASING_MODE_FXAA);
     R3D_SetAntiAliasingPreset(R3D_ANTI_ALIASING_PRESET_HIGH);
 
     R3D_ENVIRONMENT_SET(background.color, (Color){9, 14, 24, 255});
@@ -88,6 +91,7 @@ static void setup_environment(void)
     R3D_ENVIRONMENT_SET(bloom.intensity, 0.055f);
     R3D_ENVIRONMENT_SET(bloom.threshold, 1.0f);
     R3D_ENVIRONMENT_SET(bloom.softThreshold, 0.6f);
+    R3D_ENVIRONMENT_SET(bloom.levels, 1);
 
     R3D_ENVIRONMENT_SET(tonemap.mode, R3D_TONEMAP_ACES);
     R3D_ENVIRONMENT_SET(tonemap.exposure, 0.85f);
@@ -95,6 +99,12 @@ static void setup_environment(void)
 
     R3D_ENVIRONMENT_SET(color.contrast, 1.06f);
     R3D_ENVIRONMENT_SET(color.saturation, 1.08f);
+
+    R3D_ENVIRONMENT_SET(volumetricFog.enabled, true);
+    R3D_ENVIRONMENT_SET(volumetricFog.scatteringDensity, 0.08f);
+    R3D_ENVIRONMENT_SET(volumetricFog.absortionDensity, 0.03f);
+    R3D_ENVIRONMENT_SET(volumetricFog.anisotropy, 0.7f);
+    R3D_ENVIRONMENT_SET(volumetricFog.stepSize, 0.2f);
 }
 
 static void setup_modes(R3D_BuiltRenderMode modes[MODE_COUNT])
@@ -130,6 +140,12 @@ static void setup_modes(R3D_BuiltRenderMode modes[MODE_COUNT])
 
     modes[MODE_STENCIL] = R3D_RenderModeBuildStencilTest(0x01);
     modes[MODE_SHADOW_ONLY] = R3D_RenderModeBuildShadowOnly();
+
+    modes[MODE_OUTLINE] = R3D_RenderModeBuildOutline(
+        (Color){65, 220, 255, 255},
+        4.0f,
+        false
+    );
 }
 
 static void draw_studio(R3D_Mesh floorMesh, R3D_Mesh pedestalMesh,
@@ -291,13 +307,13 @@ int main(void)
     R3D_Material cyanMat = R3D_GetDefaultMaterial();
     cyanMat.albedo.color = (Color){20, 80, 110, 255};
     cyanMat.emission.color = (Color){40, 180, 255, 255};
-    cyanMat.emission.energy = 2.7f;
+    cyanMat.emission.energy = 8.7f;
     cyanMat.orm.roughness = 0.25f;
 
     R3D_Material orangeMat = R3D_GetDefaultMaterial();
     orangeMat.albedo.color = (Color){130, 65, 20, 255};
     orangeMat.emission.color = (Color){255, 125, 45, 255};
-    orangeMat.emission.energy = 2.2f;
+    orangeMat.emission.energy = 8.2f;
 
     R3D_Material blockerMat = R3D_GetDefaultMaterial();
     blockerMat.albedo.color = (Color){115, 130, 148, 255};

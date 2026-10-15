@@ -45,6 +45,9 @@ extern "C" {
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDitheredTransparency(float coverage);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildStencilMask(uint8_t reference);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildStencilTest(uint8_t reference);
+    // Width is in internal-render-resolution pixels, clamped to 1..12.
+    // throughWalls controls whether occluding geometry clips the outline.
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildOutline(Color color, float width, bool throughWalls);
 
 #ifdef __cplusplus
 }

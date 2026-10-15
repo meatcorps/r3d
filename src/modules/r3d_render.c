@@ -1029,6 +1029,8 @@ void r3d_render_quit(void)
 {
     /* --- Delete global GL buffers --- */
 
+    if (R3D_MOD_RENDER.outlineHorizontalProgram) glDeleteProgram(R3D_MOD_RENDER.outlineHorizontalProgram);
+    if (R3D_MOD_RENDER.outlineCompositeProgram) glDeleteProgram(R3D_MOD_RENDER.outlineCompositeProgram);
     if (R3D_MOD_RENDER.globalVao) glDeleteVertexArrays(1, &R3D_MOD_RENDER.globalVao);
     if (R3D_MOD_RENDER.globalVbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalVbo);
     if (R3D_MOD_RENDER.globalEbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalEbo);
@@ -1452,6 +1454,13 @@ void r3d_render_mode_push(R3D_RenderMode mode)
     if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_DEPTH_WRITE)
         effective.depthWrite = mode.depthWrite;
 
+    if (mode.overrideMask & R3D_RENDER_MODE_OVERRIDE_OUTLINE)
+    {
+        effective.outlineColor = mode.outlineColor;
+        effective.outlineWidth = mode.outlineWidth;
+        effective.outlineThroughWalls = mode.outlineThroughWalls;
+    }
+
     effective.overrideMask |= mode.overrideMask;
 
     R3D_LIST_PUSH(R3D_MOD_RENDER.modeStack, effective);
@@ -1516,6 +1525,13 @@ static void apply_render_mode(r3d_render_call_t* call, const R3D_RenderMode* mod
     {
         call->mesh.depthWriteOverride = true;
         call->mesh.depthWrite = mode->depthWrite;
+    }
+
+    if (mask & R3D_RENDER_MODE_OVERRIDE_OUTLINE)
+    {
+        call->mesh.outlineColor = mode->outlineColor;
+        call->mesh.outlineWidth = mode->outlineWidth;
+        call->mesh.outlineThroughWalls = mode->outlineThroughWalls;
     }
 }
 
@@ -1638,6 +1654,13 @@ void r3d_render_call_push(const r3d_render_call_t* call)
             {
                 R3D_LIST_PUSH(
                     R3D_MOD_RENDER.list[R3D_RENDER_LIST_WIREFRAME_OVERLAY],
+                    callIndex
+                );
+            }
+            if (pass == R3D_RENDER_PASS_OUTLINE)
+            {
+                R3D_LIST_PUSH(
+                    R3D_MOD_RENDER.list[R3D_RENDER_LIST_OUTLINE],
                     callIndex
                 );
             }

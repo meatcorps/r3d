@@ -132,6 +132,7 @@ typedef enum {
     R3D_RENDER_LIST_WIREFRAME,
     R3D_RENDER_LIST_WIREFRAME_OVERLAY,
     R3D_RENDER_LIST_OVERLAY,
+    R3D_RENDER_LIST_OUTLINE,
     R3D_RENDER_LIST_COUNT
 } r3d_render_list_enum_t;
 
@@ -261,6 +262,10 @@ typedef struct {
     R3D_RenderPass renderPass;
     Color wireColor;
 
+    Color outlineColor;
+    float outlineWidth;
+    bool outlineThroughWalls;
+
     bool depthWriteOverride;
     bool depthWrite;
 } r3d_render_call_mesh_t;
@@ -370,6 +375,9 @@ extern struct r3d_mod_render {
     r3d_list_t* modeStack;                              //< Cumulative temporary render modes
     r3d_list_t* builtModeStack;                         //< Whether each built scope pushed an effect
     r3d_list_t* groupIndices;                           //< Array of group indices for each draw call (list<int>, automatically managed)
+
+    GLuint outlineHorizontalProgram;
+    GLuint outlineCompositeProgram;
 
     bool groupCulled;                                   //< Indicates if groups already culled (controls visibility reset)
 
