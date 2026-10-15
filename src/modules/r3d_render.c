@@ -2202,6 +2202,17 @@ static bool bind_draw_morph(const r3d_render_call_t* call)
         glUniform1i(uniforms->count, count);
     }
 
+    // Used by both morph targets and triangle-based vertex effects.
+    // This must be valid even when no morph targets are active.
+    if (uniforms->vertexBase >= 0 &&
+        call->type == R3D_RENDER_CALL_MESH)
+    {
+        glUniform1i(
+            uniforms->vertexBase,
+            call->mesh.instance.vertexOffset
+        );
+    }
+
     if (count == 0) return true;
 
     if (!R3D_MOD_RENDER.morphUploadOk)
@@ -2229,11 +2240,6 @@ static bool bind_draw_morph(const r3d_render_call_t* call)
     glUniform1i(
         uniforms->offset,
         morph->activeOffset
-    );
-
-    glUniform1i(
-        uniforms->vertexBase,
-        call->mesh.instance.vertexOffset
     );
 
     glUniform1i(
