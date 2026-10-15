@@ -35,7 +35,9 @@ extern "C" {
         R3D_BUILT_MODE_COLOR_SCREEN,
         R3D_BUILT_MODE_EMISSION_COLOR,
         R3D_BUILT_MODE_ALBEDO_TEXTURE,
-        R3D_BUILT_MODE_EMISSION_TEXTURE
+        R3D_BUILT_MODE_EMISSION_TEXTURE,
+        R3D_BUILT_MODE_RIM_GLOW,
+        R3D_BUILT_MODE_FRESNEL_TRANSPARENCY
     } R3D_BuiltRenderModeKind;
 
     /*
@@ -87,6 +89,20 @@ extern "C" {
      */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildAlbedoTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionTexture(Texture2D texture, R3D_TextureBlendMode blendMode, Color tint, float blendStrength, float hdrIntensity);
+
+    /*
+     * View-dependent appearance effects.
+     *
+     * Rim Glow adds HDR emission to lit surfaces.
+     * intensity >= 0, with values above 1 supported.
+     * power controls the sharpness of the rim.
+     *
+     * Fresnel Transparency uses front/edge opacity in the range 0..1.
+     * The source material's alpha is preserved as a multiplier.
+     * Uses forward alpha blending without depth writing or shadow casting.
+     */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildRimGlow(Color color, float intensity, float power);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildFresnelTransparency(float frontOpacity, float edgeOpacity, float power);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

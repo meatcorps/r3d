@@ -13,6 +13,7 @@
 // ================================
 
 #include <ubo/frame.glsl>
+#include <ubo/view.glsl>
 #include <lib/math.glsl>
 
 // ================================

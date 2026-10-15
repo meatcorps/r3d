@@ -13,6 +13,7 @@
 // ================================
 
 #include <ubo/frame.glsl>
+#include <ubo/view.glsl>
 #include <wrap/fog.glsl>
 
 // ================================
@@ -22,6 +23,7 @@
 smooth in vec3 vPosition;       //< For custom shaders
 smooth in vec2 vTexCoord;
 smooth in vec4 vColor;
+smooth in mat3 vTBN;
 
 smooth in float vLinearDepth;
 
@@ -51,7 +53,7 @@ uniform float uCutoffSign;
 
 void main()
 {
-    SceneFragment(vTexCoord, mat3(1.0), uAlphaCutoff, uCutoffSign);
+    SceneFragment(vTexCoord, vTBN, uAlphaCutoff, uCutoffSign);
 
     FragColor = vec4(ALBEDO, ALPHA);
     FragColor = FogColorMix(FragColor, vLinearDepth);

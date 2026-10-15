@@ -337,6 +337,130 @@ R3D_BuiltRenderMode R3D_RenderModeBuildEmissionTexture(Texture2D texture, R3D_Te
     return r3d_mode_build_texture(texture, blendMode, tint, blendStrength, hdrIntensity, true);
 }
 
+/*
+ * Rim Glow:
+ *
+ * Uses the world-space geometric normal and view direction.
+ * The contribution is strongest at grazing angles.
+ *
+ * Lit surfaces receive HDR emission.
+ * Unlit surfaces receive the contribution directly in ALBEDO,
+ * because the unlit output does not use the emission channel.
+ *
+ * Depth and shadow passes do not evaluate the view-dependent effect.
+ */
+static const char R3D_RIM_GLOW_SOURCE[] =
+    "uniform vec3 rimColor = vec3(1.0);\n"
+    "uniform float rimIntensity = 1.0;\n"
+    "uniform float rimPower = 3.0;\n"
+    "void fragment() {\n"
+    "#if defined(GEOMETRY) || defined(FORWARD) || defined(PROBE_FORWARD) || defined(UNLIT)\n"
+    "    vec3 cameraPosition;\n"
+    "#if defined(GEOMETRY) || defined(UNLIT)\n"
+    "    cameraPosition = uView.position;\n"
+    "#else\n"
+    "    cameraPosition = uViewPosition;\n"
+    "#endif\n"
+    "    vec3 V = normalize(cameraPosition - POSITION);\n"
+    "    vec3 N = normalize(NORMAL);\n"
+    "    float facing = clamp(abs(dot(N, V)), 0.0, 1.0);\n"
+    "    float rim = pow(1.0 - facing, max(rimPower, 0.01));\n"
+    "    vec3 glow = rimColor * rimIntensity * rim;\n"
+    "#if defined(UNLIT)\n"
+    "    ALBEDO += glow;\n"
+    "#else\n"
+    "    EMISSION += glow;\n"
+    "#endif\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildRimGlow(Color color, float intensity, float power)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_RIM_GLOW_SOURCE);
+
+    if (!built.effect)
+        return built;
+
+    built.kind = R3D_BUILT_MODE_RIM_GLOW;
+
+    Vector3 linearColor = r3d_mode_color_linear(color);
+
+    intensity = isfinite(intensity) ? fmaxf(intensity, 0.0f) : 0.0f;
+    power = isfinite(power) ? fmaxf(power, 0.01f) : 3.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "rimColor", &linearColor);
+    R3D_SetSurfaceEffectUniform(built.effect, "rimIntensity", &intensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "rimPower", &power);
+
+    return built;
+}
+
+/*
+ * Fresnel Transparency:
+ *
+ * frontOpacity controls surfaces facing the camera.
+ * edgeOpacity controls grazing-angle surfaces.
+ * power controls the transition.
+ *
+ * The existing material alpha remains a multiplier.
+ * fresnelOpacity is a separate overall multiplier used by
+ * R3D_RenderModeSetOpacity().
+ */
+static const char R3D_FRESNEL_TRANSPARENCY_SOURCE[] =
+    "uniform float fresnelFrontOpacity = 0.1;\n"
+    "uniform float fresnelEdgeOpacity = 0.9;\n"
+    "uniform float fresnelPower = 2.0;\n"
+    "uniform float fresnelOpacity = 1.0;\n"
+    "void fragment() {\n"
+    "#if defined(FORWARD) || defined(PROBE_FORWARD) || defined(UNLIT)\n"
+    "    vec3 cameraPosition;\n"
+    "#if defined(UNLIT)\n"
+    "    cameraPosition = uView.position;\n"
+    "#else\n"
+    "    cameraPosition = uViewPosition;\n"
+    "#endif\n"
+    "    vec3 V = normalize(cameraPosition - POSITION);\n"
+    "    vec3 N = normalize(NORMAL);\n"
+    "    float facing = clamp(abs(dot(N, V)), 0.0, 1.0);\n"
+    "    float fresnel = pow(1.0 - facing, max(fresnelPower, 0.01));\n"
+    "    float opacity = mix(fresnelFrontOpacity, fresnelEdgeOpacity, fresnel);\n"
+    "    ALPHA *= opacity * fresnelOpacity;\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildFresnelTransparency(float frontOpacity, float edgeOpacity, float power)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_FRESNEL_TRANSPARENCY_SOURCE);
+
+    if (!built.effect)
+        return built;
+
+    built.kind = R3D_BUILT_MODE_FRESNEL_TRANSPARENCY;
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY |
+        R3D_RENDER_MODE_OVERRIDE_BLEND |
+        R3D_RENDER_MODE_OVERRIDE_SHADOW;
+
+    built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
+    built.mode.blendMode = R3D_BLEND_ALPHA;
+    built.mode.shadowCastMode = R3D_SHADOW_CAST_DISABLED;
+
+    frontOpacity = isfinite(frontOpacity) ? r3d_mode_clamp01(frontOpacity) : 0.0f;
+    edgeOpacity = isfinite(edgeOpacity) ? r3d_mode_clamp01(edgeOpacity) : 1.0f;
+    power = isfinite(power) ? fmaxf(power, 0.01f) : 2.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "fresnelFrontOpacity", &frontOpacity);
+    R3D_SetSurfaceEffectUniform(built.effect, "fresnelEdgeOpacity", &edgeOpacity);
+    R3D_SetSurfaceEffectUniform(built.effect, "fresnelPower", &power);
+
+    return built;
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -702,6 +826,15 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
 
             return true;
         }
+        case R3D_BUILT_MODE_RIM_GLOW:
+        {
+            if (!built->effect) return false;
+
+            Vector3 linearColor = r3d_mode_color_linear(color);
+            R3D_SetSurfaceEffectUniform(built->effect, "rimColor", &linearColor);
+
+            return true;
+        }
 
         default:
             return false;
@@ -768,8 +901,18 @@ bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity)
         return true;
     }
 
-    default:
-        return false;
+    case R3D_BUILT_MODE_FRESNEL_TRANSPARENCY:
+    {
+        if (!built->effect) return false;
+
+        opacity = r3d_mode_clamp01(opacity);
+        R3D_SetSurfaceEffectUniform(built->effect, "fresnelOpacity", &opacity);
+
+        return true;
+    }
+
+        default:
+            return false;
     }
 }
 
