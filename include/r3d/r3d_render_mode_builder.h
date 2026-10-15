@@ -43,7 +43,14 @@ extern "C" {
         R3D_BUILT_MODE_HOLOGRAM,
         R3D_BUILT_MODE_DISSOLVE,
         R3D_BUILT_MODE_EMISSION_PULSE,
-        R3D_BUILT_MODE_GLITCH
+        R3D_BUILT_MODE_GLITCH,
+        R3D_BUILT_MODE_UV_SCROLL,
+        R3D_BUILT_MODE_UV_DISTORTION,
+        R3D_BUILT_MODE_GRADIENT,
+        R3D_BUILT_MODE_PIXELATE,
+        R3D_BUILT_MODE_DITHER_FADE,
+        R3D_BUILT_MODE_SLICE_DISPLACE,
+        R3D_BUILT_MODE_CUT_CLIP
     } R3D_BuiltRenderModeKind;
 
     /*
@@ -89,6 +96,7 @@ extern "C" {
     R3DAPI bool R3D_RenderModeSetThroughWalls(R3D_BuiltRenderMode* built, bool enabled);
     R3DAPI bool R3D_RenderModeSetProgress(R3D_BuiltRenderMode* built, float progress);
     R3DAPI bool R3D_RenderModeSetStrength(R3D_BuiltRenderMode* built, float strength);
+    R3DAPI bool R3D_RenderModeSetCutDistance(R3D_BuiltRenderMode* built, float distance);
 
     /* Color and appearance: surface operations before lighting. */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorReplace(Color color);
@@ -157,6 +165,44 @@ extern "C" {
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDissolve(Color edgeColor, float progress, float noiseScale, float edgeWidth, float edgeIntensity);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionPulse(Color color, float minIntensity, float maxIntensity, float frequency);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildGlitch(float amplitude, float frequency, float stripeDensity);
+    /*
+     * Phase 5: UV and procedural surface effects.
+     *
+     * UV Scroll:
+     *   speed is UV units per second.
+     *
+     * UV Distortion:
+     *   amplitude is UV displacement.
+     *   frequency is the number of waves across UV space.
+     *   speed controls animation.
+     *
+     * Gradient:
+     *   start/end use local mesh coordinates projected onto axis.
+     *   strength 0 = original albedo, 1 = gradient colors.
+     *
+     * Pixelate:
+     *   uvCells is the number of UV blocks per UV unit.
+     *   colorLevels >= 2 enables color quantization; 0 disables it.
+     *
+     * Dither Fade:
+     *   progress 0 = visible, 1 = invisible.
+     *
+     * Displaced Slice:
+     *   bandsPerUnit defines horizontal slice density.
+     *   displacement is measured in local mesh units.
+     *   gap is a fraction of each slice's height.
+     *
+     * CutClip:
+     *   Keeps the positive side of a plane in local mesh space.
+     *   Does not generate geometry to cap the cut.
+     */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildUVScroll(Vector2 speed);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildUVDistortion(float amplitude, float frequency, float speed);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildGradient(Color colorA, Color colorB, Vector3 axis, float start, float end, float strength);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildPixelate(float uvCells, float colorLevels);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDitherFade(float progress, float pixelScale);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildSliceDisplace(float bandsPerUnit, float displacement, float gap, float speed);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildCutClip(Vector3 normal, float distance, Color edgeColor, float edgeWidth, float edgeIntensity);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

@@ -106,7 +106,7 @@ void main()
 
     /* Sample normal map and compute final normal */
 
-    vec3 N = normalize(TBN * M_NormalScale(texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0, uNormalScale));
+    vec3 N = normalize(TBN * M_NormalScale(NORMAL_MAP * 2.0 - 1.0, uNormalScale));
     if (!gl_FrontFacing) N = -N; // Flip for back facing triangles with double sided meshes
 
     /* Compute view direction and the dot product of the normal and view direction */

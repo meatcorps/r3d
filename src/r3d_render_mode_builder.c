@@ -762,6 +762,303 @@ R3D_BuiltRenderMode R3D_RenderModeBuildGlitch(float amplitude, float frequency, 
     return built;
 }
 
+static const char R3D_UV_SCROLL_SOURCE[] =
+    "uniform vec2 uvScrollSpeed = vec2(0.0);\n"
+    "void vertex() {\n"
+    "    TEXCOORD += uvScrollSpeed * TIME;\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildUVScroll(Vector2 speed)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_UV_SCROLL_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_UV_SCROLL;
+
+    speed.x = isfinite(speed.x) ? speed.x : 0.0f;
+    speed.y = isfinite(speed.y) ? speed.y : 0.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "uvScrollSpeed", &speed);
+
+    return built;
+}
+
+static const char R3D_UV_DISTORTION_SOURCE[] =
+    "uniform float uvWarpAmplitude = 0.03;\n"
+    "uniform float uvWarpFrequency = 8.0;\n"
+    "uniform float uvWarpSpeed = 2.0;\n"
+    "void fragment() {\n"
+    "    if (uvWarpAmplitude <= 0.0) return;\n"
+    "    vec2 uv = TEXCOORD;\n"
+    "    float phase = TIME * uvWarpSpeed;\n"
+    "    float xWave = sin(uv.y * uvWarpFrequency * 6.2831853 + phase);\n"
+    "    float yWave = cos(uv.x * uvWarpFrequency * 6.2831853 - phase * 0.73);\n"
+    "    TEXCOORD = uv + vec2(xWave, yWave) * uvWarpAmplitude;\n"
+    "    FetchMaterial(TEXCOORD);\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildUVDistortion(float amplitude, float frequency, float speed)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_UV_DISTORTION_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_UV_DISTORTION;
+
+    amplitude = isfinite(amplitude) ? fmaxf(amplitude, 0.0f) : 0.0f;
+    frequency = isfinite(frequency) ? fmaxf(frequency, 0.01f) : 8.0f;
+    speed = isfinite(speed) ? speed : 2.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "uvWarpAmplitude", &amplitude);
+    R3D_SetSurfaceEffectUniform(built.effect, "uvWarpFrequency", &frequency);
+    R3D_SetSurfaceEffectUniform(built.effect, "uvWarpSpeed", &speed);
+
+    return built;
+}
+
+static const char R3D_GRADIENT_SOURCE[] =
+    "uniform vec3 gradientColorA = vec3(0.0);\n"
+    "uniform vec3 gradientColorB = vec3(1.0);\n"
+    "uniform vec3 gradientAxis = vec3(0.0, 1.0, 0.0);\n"
+    "uniform float gradientStart = -0.5;\n"
+    "uniform float gradientEnd = 0.5;\n"
+    "uniform float gradientStrength = 1.0;\n"
+    "varying vec3 gradientLocalPosition;\n"
+    "void vertex() {\n"
+    "    gradientLocalPosition = POSITION;\n"
+    "}\n"
+    "void fragment() {\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    float height = dot(gradientLocalPosition, gradientAxis);\n"
+    "    float t = clamp((height - gradientStart) / max(gradientEnd - gradientStart, 0.0001), 0.0, 1.0);\n"
+    "    vec3 gradient = mix(gradientColorA, gradientColorB, t);\n"
+    "    ALBEDO = mix(ALBEDO, gradient, clamp(gradientStrength, 0.0, 1.0));\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildGradient(Color colorA, Color colorB, Vector3 axis, float start, float end, float strength)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_GRADIENT_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_GRADIENT;
+
+    Vector3 linearA = r3d_mode_color_linear(colorA);
+    Vector3 linearB = r3d_mode_color_linear(colorB);
+
+    float length = sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+
+    if (!isfinite(length) || length < 0.0001f)
+    {
+        axis = (Vector3){0.0f, 1.0f, 0.0f};
+    }
+    else
+    {
+        axis.x /= length;
+        axis.y /= length;
+        axis.z /= length;
+    }
+
+    start = isfinite(start) ? start : -0.5f;
+    end = isfinite(end) ? fmaxf(end, start + 0.0001f) : start + 1.0f;
+    strength = isfinite(strength) ? r3d_mode_clamp01(strength) : 1.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientColorA", &linearA);
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientColorB", &linearB);
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientAxis", &axis);
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientStart", &start);
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientEnd", &end);
+    R3D_SetSurfaceEffectUniform(built.effect, "gradientStrength", &strength);
+
+    return built;
+}
+
+static const char R3D_PIXELATE_SOURCE[] =
+    "uniform float pixelUvCells = 16.0;\n"
+    "uniform float pixelColorLevels = 5.0;\n"
+    "void fragment() {\n"
+    "    if (pixelUvCells > 0.0) {\n"
+    "        float cells = max(pixelUvCells, 1.0);\n"
+    "        TEXCOORD = (floor(TEXCOORD * cells) + 0.5) / cells;\n"
+    "        FetchMaterial(TEXCOORD);\n"
+    "    }\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    if (pixelColorLevels >= 2.0) {\n"
+    "        float steps = max(pixelColorLevels - 1.0, 1.0);\n"
+    "        ALBEDO = floor(clamp(ALBEDO, 0.0, 1.0) * steps + 0.5) / steps;\n"
+    "    }\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildPixelate(float uvCells, float colorLevels)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_PIXELATE_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_PIXELATE;
+
+    uvCells = isfinite(uvCells) ? fmaxf(uvCells, 0.0f) : 0.0f;
+    colorLevels = isfinite(colorLevels) ? fmaxf(colorLevels, 0.0f) : 0.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "pixelUvCells", &uvCells);
+    R3D_SetSurfaceEffectUniform(built.effect, "pixelColorLevels", &colorLevels);
+
+    return built;
+}
+
+static const char R3D_DITHER_FADE_SOURCE[] =
+    "uniform float ditherFadeProgress = 0.0;\n"
+    "uniform float ditherPixelScale = 1.0;\n"
+    "void fragment() {\n"
+    "    float coverage = 1.0 - clamp(ditherFadeProgress, 0.0, 1.0);\n"
+    "    float scale = max(ditherPixelScale, 1.0);\n"
+    "    int x = int(mod(floor(gl_FragCoord.x / scale), 4.0));\n"
+    "    int y = int(mod(floor(gl_FragCoord.y / scale), 4.0));\n"
+    "    const float bayer[16] = float[16](\n"
+    "        0.0, 8.0, 2.0, 10.0,\n"
+    "        12.0, 4.0, 14.0, 6.0,\n"
+    "        3.0, 11.0, 1.0, 9.0,\n"
+    "        15.0, 7.0, 13.0, 5.0);\n"
+    "    float threshold = (bayer[x + y * 4] + 0.5) / 16.0;\n"
+    "    if (coverage <= threshold) discard;\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildDitherFade(float progress, float pixelScale)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_DITHER_FADE_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_DITHER_FADE;
+
+    built.mode.overrideMask = R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY;
+    built.mode.transparencyMode = R3D_TRANSPARENCY_OPAQUE;
+
+    progress = isfinite(progress) ? r3d_mode_clamp01(progress) : 0.0f;
+    pixelScale = isfinite(pixelScale) ? fmaxf(pixelScale, 1.0f) : 1.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "ditherFadeProgress", &progress);
+    R3D_SetSurfaceEffectUniform(built.effect, "ditherPixelScale", &pixelScale);
+
+    return built;
+}
+
+static const char R3D_SLICE_DISPLACE_SOURCE[] =
+    "uniform float sliceBandDensity = 8.0;\n"
+    "uniform float sliceDisplacement = 0.15;\n"
+    "uniform float sliceGap = 0.06;\n"
+    "uniform float sliceSpeed = 1.0;\n"
+    "varying vec3 sliceLocalPosition;\n"
+    "float sliceHash(float value) {\n"
+    "    return fract(sin(value * 127.1) * 43758.5453);\n"
+    "}\n"
+    "void vertex() {\n"
+    "    sliceLocalPosition = POSITION;\n"
+    "    float band = floor(POSITION.y * sliceBandDensity);\n"
+    "    float randomOffset = sliceHash(band * 17.31) * 2.0 - 1.0;\n"
+    "    float movement = sin(TIME * sliceSpeed + band * 2.17);\n"
+    "    POSITION.x += randomOffset * sliceDisplacement * movement;\n"
+    "    POSITION.z += cos(TIME * sliceSpeed + band * 1.13) * sliceDisplacement * 0.2;\n"
+    "}\n"
+    "void fragment() {\n"
+    "    float fraction = fract(sliceLocalPosition.y * sliceBandDensity);\n"
+    "    float seam = min(fraction, 1.0 - fraction);\n"
+    "    if (sliceGap > 0.0 && seam < sliceGap * 0.5) discard;\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildSliceDisplace(float bandsPerUnit, float displacement, float gap, float speed)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_SLICE_DISPLACE_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_SLICE_DISPLACE;
+
+    bandsPerUnit = isfinite(bandsPerUnit) ? fmaxf(bandsPerUnit, 0.01f) : 8.0f;
+    displacement = isfinite(displacement) ? fmaxf(displacement, 0.0f) : 0.0f;
+    gap = isfinite(gap) ? fmaxf(0.0f, fminf(gap, 0.45f)) : 0.0f;
+    speed = isfinite(speed) ? speed : 1.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "sliceBandDensity", &bandsPerUnit);
+    R3D_SetSurfaceEffectUniform(built.effect, "sliceDisplacement", &displacement);
+    R3D_SetSurfaceEffectUniform(built.effect, "sliceGap", &gap);
+    R3D_SetSurfaceEffectUniform(built.effect, "sliceSpeed", &speed);
+
+    return built;
+}
+
+static const char R3D_CUT_CLIP_SOURCE[] =
+    "uniform vec3 cutNormal = vec3(0.0, 1.0, 0.0);\n"
+    "uniform float cutDistance = 0.0;\n"
+    "uniform vec3 cutEdgeColor = vec3(1.0, 0.2, 0.0);\n"
+    "uniform float cutEdgeWidth = 0.05;\n"
+    "uniform float cutEdgeIntensity = 3.0;\n"
+    "varying vec3 cutLocalPosition;\n"
+    "void vertex() {\n"
+    "    cutLocalPosition = POSITION;\n"
+    "}\n"
+    "void fragment() {\n"
+    "    float distanceFromPlane = dot(cutLocalPosition, cutNormal) - cutDistance;\n"
+    "    if (distanceFromPlane < 0.0) discard;\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    if (cutEdgeWidth > 0.0) {\n"
+    "        float border = 1.0 - smoothstep(0.0, cutEdgeWidth, distanceFromPlane);\n"
+    "        vec3 glow = cutEdgeColor * cutEdgeIntensity * border;\n"
+    "#if defined(UNLIT) || defined(PROBE_UNLIT)\n"
+    "        ALBEDO += glow;\n"
+    "#else\n"
+    "        EMISSION += glow;\n"
+    "#endif\n"
+    "    }\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildCutClip(Vector3 normal, float distance, Color edgeColor, float edgeWidth, float edgeIntensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_CUT_CLIP_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_CUT_CLIP;
+
+    float length = sqrtf(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+
+    if (!isfinite(length) || length < 0.0001f)
+    {
+        normal = (Vector3){0.0f, 1.0f, 0.0f};
+    }
+    else
+    {
+        normal.x /= length;
+        normal.y /= length;
+        normal.z /= length;
+    }
+
+    Vector3 linearColor = r3d_mode_color_linear(edgeColor);
+
+    distance = isfinite(distance) ? distance : 0.0f;
+    edgeWidth = isfinite(edgeWidth) ? fmaxf(edgeWidth, 0.0f) : 0.0f;
+    edgeIntensity = isfinite(edgeIntensity) ? fmaxf(edgeIntensity, 0.0f) : 0.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "cutNormal", &normal);
+    R3D_SetSurfaceEffectUniform(built.effect, "cutDistance", &distance);
+    R3D_SetSurfaceEffectUniform(built.effect, "cutEdgeColor", &linearColor);
+    R3D_SetSurfaceEffectUniform(built.effect, "cutEdgeWidth", &edgeWidth);
+    R3D_SetSurfaceEffectUniform(built.effect, "cutEdgeIntensity", &edgeIntensity);
+
+    return built;
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -1145,6 +1442,7 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
         case R3D_BUILT_MODE_HOLOGRAM:
         case R3D_BUILT_MODE_DISSOLVE:
         case R3D_BUILT_MODE_EMISSION_PULSE:
+        case R3D_BUILT_MODE_CUT_CLIP:
         {
             if (!built->effect) return false;
 
@@ -1153,6 +1451,7 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
             const char* uniformName =
                 built->kind == R3D_BUILT_MODE_HOLOGRAM ? "hologramColor" :
                 built->kind == R3D_BUILT_MODE_DISSOLVE ? "dissolveEdgeColor" :
+                built->kind == R3D_BUILT_MODE_CUT_CLIP ? "cutEdgeColor" :
                 "pulseColor";
 
             R3D_SetSurfaceEffectUniform(built->effect, uniformName, &linearColor);
@@ -1255,20 +1554,27 @@ bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity)
 
 bool R3D_RenderModeSetProgress(R3D_BuiltRenderMode* built, float progress)
 {
-    if (!built || !built->effect ||
-        built->kind != R3D_BUILT_MODE_DISSOLVE ||
-        !isfinite(progress))
-    {
+    if (!built || !built->effect || !isfinite(progress))
         return false;
+
+    const char* uniformName = NULL;
+
+    switch (built->kind)
+    {
+        case R3D_BUILT_MODE_DISSOLVE:
+            uniformName = "dissolveProgress";
+            break;
+
+        case R3D_BUILT_MODE_DITHER_FADE:
+            uniformName = "ditherFadeProgress";
+            break;
+
+        default:
+            return false;
     }
 
     progress = r3d_mode_clamp01(progress);
-
-    R3D_SetSurfaceEffectUniform(
-        built->effect,
-        "dissolveProgress",
-        &progress
-    );
+    R3D_SetSurfaceEffectUniform(built->effect, uniformName, &progress);
 
     return true;
 }
@@ -1294,9 +1600,36 @@ bool R3D_RenderModeSetStrength(R3D_BuiltRenderMode* built, float strength)
             R3D_SetSurfaceEffectUniform(built->effect, "hologramIntensity", &strength);
             return true;
 
+        case R3D_BUILT_MODE_UV_DISTORTION:
+            R3D_SetSurfaceEffectUniform(built->effect, "uvWarpAmplitude", &strength);
+            return true;
+
+        case R3D_BUILT_MODE_GRADIENT:
+            strength = r3d_mode_clamp01(strength);
+            R3D_SetSurfaceEffectUniform(built->effect, "gradientStrength", &strength);
+            return true;
+
+        case R3D_BUILT_MODE_SLICE_DISPLACE:
+            R3D_SetSurfaceEffectUniform(built->effect, "sliceDisplacement", &strength);
+            return true;
+
         default:
             return false;
     }
+}
+
+bool R3D_RenderModeSetCutDistance(R3D_BuiltRenderMode* built, float distance)
+{
+    if (!built || !built->effect ||
+        built->kind != R3D_BUILT_MODE_CUT_CLIP ||
+        !isfinite(distance))
+    {
+        return false;
+    }
+
+    R3D_SetSurfaceEffectUniform(built->effect, "cutDistance", &distance);
+
+    return true;
 }
 
 bool R3D_RenderModeSetWidth(R3D_BuiltRenderMode* built, float width)

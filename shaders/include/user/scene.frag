@@ -124,7 +124,6 @@ void SceneFragment(vec2 texCoord, mat3 tbn, float alphaCutoff, float cutoffSign)
 
 #if !defined(R3D_NO_AUTO_FETCH)
     vec4 color = vColor * texture(uAlbedoMap, texCoord);
-    ALPHA_TEST(color.a);
     ALBEDO = color.rgb;
     ALPHA = color.a;
 
