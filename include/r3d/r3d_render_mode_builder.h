@@ -1,3 +1,11 @@
+/* r3d_render_mode_builder.h -- R3D Render mode builder Module.
+*
+ * Copyright (c) 2025-2026 Dennis Steffen
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * For conditions of distribution and use, see accompanying LICENSE file.
+ */
+
 #ifndef R3D_RENDER_MODE_BUILDER_H
 #define R3D_RENDER_MODE_BUILDER_H
 
