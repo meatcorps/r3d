@@ -28,6 +28,14 @@ extern "C" {
     /* Pop restores the previously active effect stack. */
     R3DAPI void R3D_PopSurfaceEffect(void);
 
+    /*
+     * Scoped multiplicative tint for subsequent draw submissions.
+     * Nesting composes tints in push order.
+     * Push/Pop must be balanced inside an R3D rendering session.
+     */
+    R3DAPI void R3D_PushColor(Color color);
+    R3DAPI void R3D_PopColor(void);
+
 #ifdef __cplusplus
 }
 #endif

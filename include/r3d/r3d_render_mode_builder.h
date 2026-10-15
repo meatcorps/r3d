@@ -27,7 +27,13 @@ extern "C" {
         R3D_BUILT_MODE_WIREFRAME_OVERLAY,
         R3D_BUILT_MODE_SILHOUETTE,
         R3D_BUILT_MODE_DITHERED,
-        R3D_BUILT_MODE_OUTLINE
+        R3D_BUILT_MODE_OUTLINE,
+        R3D_BUILT_MODE_COLOR_REPLACE,
+        R3D_BUILT_MODE_COLOR_TINT,
+        R3D_BUILT_MODE_COLOR_MIX,
+        R3D_BUILT_MODE_COLOR_ADD,
+        R3D_BUILT_MODE_COLOR_SCREEN,
+        R3D_BUILT_MODE_EMISSION_COLOR
     } R3D_BuiltRenderModeKind;
 
     typedef struct R3D_BuiltRenderMode {
@@ -44,6 +50,15 @@ extern "C" {
     R3DAPI bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity);
     R3DAPI bool R3D_RenderModeSetWidth(R3D_BuiltRenderMode* built, float width);
     R3DAPI bool R3D_RenderModeSetThroughWalls(R3D_BuiltRenderMode* built, bool enabled);
+
+    /* Color and appearance: surface operations before lighting. */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorReplace(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorMultiply(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorTint(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorMix(Color color, float strength);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorAdd(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorScreen(Color color);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionColor(Color color, float intensity);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

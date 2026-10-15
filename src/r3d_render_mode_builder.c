@@ -111,6 +111,113 @@ static float r3d_mode_clamp01(float value)
     return value;
 }
 
+/*
+ * Color operations work on the surface's linear-space ALBEDO.
+ * Emission is added separately and may exceed 1.0 for HDR.
+ *
+ * Color alpha is intentionally not used here. Transparency is
+ * managed by the existing opacity/transparency effects.
+ */
+static const char R3D_COLOR_EFFECT_SOURCE[] =
+    "uniform vec3 effectColor = vec3(1.0);\n"
+    "uniform float effectStrength = 1.0;\n"
+    "uniform float effectIntensity = 1.0;\n"
+    "uniform int effectOperation = 0;\n"
+    "void fragment() {\n"
+    "    if (effectOperation == 0) {\n"
+    "        ALBEDO = effectColor;\n"
+    "    } else if (effectOperation == 1) {\n"
+    "        ALBEDO *= effectColor;\n"
+    "    } else if (effectOperation == 2) {\n"
+    "        ALBEDO = mix(ALBEDO, effectColor, effectStrength);\n"
+    "    } else if (effectOperation == 3) {\n"
+    "        ALBEDO = clamp(ALBEDO + effectColor, 0.0, 1.0);\n"
+    "    } else if (effectOperation == 4) {\n"
+    "        vec3 base = clamp(ALBEDO, 0.0, 1.0);\n"
+    "        ALBEDO = 1.0 - (1.0 - base) * (1.0 - effectColor);\n"
+    "    } else if (effectOperation == 5) {\n"
+    "        EMISSION += effectColor * effectIntensity;\n"
+    "    }\n"
+    "}\n";
+
+/* Convert the public raylib Color from sRGB to linear RGB. */
+static float r3d_mode_color_channel(unsigned char channel)
+{
+    float value = channel / 255.0f;
+
+    if (value <= 0.04045f)
+        return value / 12.92f;
+
+    return powf((value + 0.055f) / 1.055f, 2.4f);
+}
+
+static Vector3 r3d_mode_color_linear(Color color)
+{
+    return (Vector3){
+        r3d_mode_color_channel(color.r),
+        r3d_mode_color_channel(color.g),
+        r3d_mode_color_channel(color.b)
+    };
+}
+
+static R3D_BuiltRenderMode r3d_mode_build_color(Color color, R3D_BuiltRenderModeKind kind, int operation, float strength, float intensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.kind = kind;
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_COLOR_EFFECT_SOURCE);
+
+    if (!built.effect)
+        return built;
+
+    Vector3 linearColor = r3d_mode_color_linear(color);
+
+    strength = isfinite(strength) ? r3d_mode_clamp01(strength) : 0.0f;
+    intensity = isfinite(intensity) ? fmaxf(intensity, 0.0f) : 0.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "effectColor", &linearColor);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectStrength", &strength);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectIntensity", &intensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "effectOperation", &operation);
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorReplace(Color color)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_COLOR_REPLACE, 0, 1.0f, 1.0f);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorMultiply(Color color)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_COLOR_TINT, 1, 1.0f, 1.0f);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorTint(Color color)
+{
+    return R3D_RenderModeBuildColorMultiply(color);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorMix(Color color, float strength)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_COLOR_MIX, 2, strength, 1.0f);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorAdd(Color color)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_COLOR_ADD, 3, 1.0f, 1.0f);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildColorScreen(Color color)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_COLOR_SCREEN, 4, 1.0f, 1.0f);
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildEmissionColor(Color color, float intensity)
+{
+    return r3d_mode_build_color(color, R3D_BUILT_MODE_EMISSION_COLOR, 5, 1.0f, intensity);
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -417,42 +524,57 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
 
     switch (built->kind)
     {
-    case R3D_BUILT_MODE_XRAY:
-    case R3D_BUILT_MODE_OCCLUDED_ONLY:
-        color.a = built->mode.albedoColor.a;
-        built->mode.albedoColor = color;
-        return true;
+        case R3D_BUILT_MODE_XRAY:
+        case R3D_BUILT_MODE_OCCLUDED_ONLY:
+            color.a = built->mode.albedoColor.a;
+            built->mode.albedoColor = color;
+            return true;
 
-    case R3D_BUILT_MODE_WIREFRAME:
-    case R3D_BUILT_MODE_WIREFRAME_OVERLAY:
-        color.a = built->mode.wireColor.a;
-        built->mode.wireColor = color;
-        return true;
+        case R3D_BUILT_MODE_WIREFRAME:
+        case R3D_BUILT_MODE_WIREFRAME_OVERLAY:
+            color.a = built->mode.wireColor.a;
+            built->mode.wireColor = color;
+            return true;
 
-    case R3D_BUILT_MODE_SILHOUETTE:
-    {
-        if (!built->effect) return false;
+        case R3D_BUILT_MODE_SILHOUETTE:
+        {
+            if (!built->effect) return false;
 
-        color.a = built->mode.albedoColor.a;
-        built->mode.albedoColor = color;
+            color.a = built->mode.albedoColor.a;
+            built->mode.albedoColor = color;
 
-        Vector3 rgb = {
-            color.r / 255.0f,
-            color.g / 255.0f,
-            color.b / 255.0f
-        };
+            Vector3 rgb = {
+                color.r / 255.0f,
+                color.g / 255.0f,
+                color.b / 255.0f
+            };
 
-        R3D_SetSurfaceEffectUniform(built->effect, "silhouetteColor", &rgb);
-        return true;
-    }
+            R3D_SetSurfaceEffectUniform(built->effect, "silhouetteColor", &rgb);
+            return true;
+        }
 
-    case R3D_BUILT_MODE_OUTLINE:
-        color.a = built->mode.outlineColor.a;
-        built->mode.outlineColor = color;
-        return true;
+        case R3D_BUILT_MODE_OUTLINE:
+            color.a = built->mode.outlineColor.a;
+            built->mode.outlineColor = color;
+            return true;
 
-    default:
-        return false;
+        case R3D_BUILT_MODE_COLOR_REPLACE:
+        case R3D_BUILT_MODE_COLOR_TINT:
+        case R3D_BUILT_MODE_COLOR_MIX:
+        case R3D_BUILT_MODE_COLOR_ADD:
+        case R3D_BUILT_MODE_COLOR_SCREEN:
+        case R3D_BUILT_MODE_EMISSION_COLOR:
+        {
+            if (!built->effect) return false;
+
+            Vector3 linearColor = r3d_mode_color_linear(color);
+            R3D_SetSurfaceEffectUniform(built->effect, "effectColor", &linearColor);
+
+            return true;
+        }
+
+        default:
+            return false;
     }
 }
 

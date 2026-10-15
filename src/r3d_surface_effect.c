@@ -1,6 +1,7 @@
 /* r3d_surface_effect.c -- Temporary surface effect resources and snapshots. */
 
 #include <r3d/r3d_surface_effect.h>
+#include <r3d/r3d_render_mode_builder.h>
 #include <r3d_config.h>
 #include <raylib.h>
 
@@ -46,6 +47,10 @@ static GLint effectBufferAlignment = 1;
 static bool effectRangeBound = false;
 static uint32_t effectBoundOffset = 0;
 static uint32_t effectBoundSize = 0;
+
+/* Reusable tint effect for R3D_PushColor/R3D_PopColor. */
+static R3D_BuiltRenderMode colorScopeMode = {0};
+static unsigned int colorScopeDepth = 0;
 
 static bool effect_identifier_start(char c)
 {
@@ -502,8 +507,54 @@ void R3D_PopSurfaceEffect(void)
     r3d_effect_pop();
 }
 
+void R3D_PushColor(Color color)
+{
+    if (!activeEffects)
+    {
+        TraceLog(LOG_ERROR, "R3D: PushColor requires initialized effect state");
+        return;
+    }
+
+    if (!colorScopeMode.effect)
+    {
+        colorScopeMode = R3D_RenderModeBuildColorTint(WHITE);
+
+        if (!colorScopeMode.effect)
+        {
+            TraceLog(LOG_ERROR, "R3D: Failed to create PushColor effect");
+            return;
+        }
+    }
+
+    if (!R3D_RenderModeSetColor(&colorScopeMode, color))
+        return;
+
+    /*
+     * The current uniform values are snapshotted on push.
+     * Changing the color for a nested scope does not modify
+     * the outer scope's captured values.
+     */
+    if (r3d_effect_push(colorScopeMode.effect))
+        colorScopeDepth++;
+}
+
+void R3D_PopColor(void)
+{
+    if (colorScopeDepth == 0)
+    {
+        TraceLog(LOG_WARNING, "R3D: Color scope stack underflow");
+        return;
+    }
+
+    colorScopeDepth--;
+    r3d_effect_pop();
+}
+
 void r3d_effect_init(void)
 {
+    colorScopeMode = (R3D_BuiltRenderMode){0};
+    colorScopeDepth = 0;
+
     activeEffects = R3D_LIST_CREATE(r3d_effect_snapshot_t, 8);
     capturedEffects = R3D_LIST_CREATE(r3d_effect_snapshot_t, 64);
     parameterBytes = R3D_LIST_CREATE(uint8_t, 1024);
@@ -524,6 +575,9 @@ void r3d_effect_init(void)
 
 void r3d_effect_quit(void)
 {
+    R3D_UnloadBuiltRenderMode(&colorScopeMode);
+    colorScopeDepth = 0;
+
     if (effectVariants)
     {
         for (size_t i = 0; i < R3D_LIST_LENGTH(effectVariants); i++)
@@ -561,6 +615,8 @@ void r3d_effect_quit(void)
 
 void r3d_effect_clear(void)
 {
+    colorScopeDepth = 0;
+
     if (activeEffects) R3D_LIST_CLEAR(activeEffects);
     if (capturedEffects) R3D_LIST_CLEAR(capturedEffects);
     if (parameterBytes) R3D_LIST_CLEAR(parameterBytes);
