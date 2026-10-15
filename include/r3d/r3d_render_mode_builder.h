@@ -39,7 +39,11 @@ extern "C" {
         R3D_BUILT_MODE_RIM_GLOW,
         R3D_BUILT_MODE_FRESNEL_TRANSPARENCY,
         R3D_BUILT_MODE_OUTER_GLOW,
-        R3D_BUILT_MODE_DROP_SHADOW
+        R3D_BUILT_MODE_DROP_SHADOW,
+        R3D_BUILT_MODE_HOLOGRAM,
+        R3D_BUILT_MODE_DISSOLVE,
+        R3D_BUILT_MODE_EMISSION_PULSE,
+        R3D_BUILT_MODE_GLITCH
     } R3D_BuiltRenderModeKind;
 
     /*
@@ -83,6 +87,8 @@ extern "C" {
     R3DAPI bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity);
     R3DAPI bool R3D_RenderModeSetWidth(R3D_BuiltRenderMode* built, float width);
     R3DAPI bool R3D_RenderModeSetThroughWalls(R3D_BuiltRenderMode* built, bool enabled);
+    R3DAPI bool R3D_RenderModeSetProgress(R3D_BuiltRenderMode* built, float progress);
+    R3DAPI bool R3D_RenderModeSetStrength(R3D_BuiltRenderMode* built, float strength);
 
     /* Color and appearance: surface operations before lighting. */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildColorReplace(Color color);
@@ -122,6 +128,35 @@ extern "C" {
     /* Screen-space silhouette effects. Parameters use internal pixels. */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildOuterGlow(Color color, float radius, float spread, float intensity);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDropShadow(Color color, Vector2 offset, float blurRadius, float spread, float opacity);
+
+    /*
+     * Animated Color and Appearance effects.
+     *
+     * Hologram:
+     *   opacity: 0..1
+     *   scanlineDensity: lines per local mesh unit
+     *   scrollSpeed: scanline movement per second
+     *   hdrIntensity: >= 0
+     *
+     * Dissolve:
+     *   progress: 0 = intact, 1 = completely removed
+     *   noiseScale: procedural noise frequency in local space
+     *   edgeWidth: glowing transition band, 0..1
+     *   edgeIntensity: HDR intensity, >= 0
+     *
+     * Emission Pulse:
+     *   intensity: peak HDR emission, >= 0
+     *   frequency: pulses per second
+     *
+     * Glitch:
+     *   amplitude: maximum local-space vertex displacement
+     *   frequency: pattern updates per second
+     *   stripeDensity: horizontal bands per local mesh unit
+     */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildHologram(Color color, float opacity, float scanlineDensity, float scrollSpeed, float hdrIntensity);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDissolve(Color edgeColor, float progress, float noiseScale, float edgeWidth, float edgeIntensity);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildEmissionPulse(Color color, float minIntensity, float maxIntensity, float frequency);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildGlitch(float amplitude, float frequency, float stripeDensity);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

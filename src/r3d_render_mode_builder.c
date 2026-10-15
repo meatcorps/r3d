@@ -502,6 +502,266 @@ R3D_BuiltRenderMode R3D_RenderModeBuildDropShadow(Color color, Vector2 offset, f
     return built;
 }
 
+/*
+ * HOLOGRAM
+ *
+ * Animated scanlines in object-local space.
+ * Uses unlit alpha blending so the hologram remains visible
+ * without direct illumination.
+ */
+static const char R3D_HOLOGRAM_SOURCE[] =
+    "uniform vec3 hologramColor = vec3(0.0, 1.0, 1.0);\n"
+    "uniform float hologramOpacity = 0.7;\n"
+    "uniform float hologramDensity = 25.0;\n"
+    "uniform float hologramSpeed = 1.0;\n"
+    "uniform float hologramIntensity = 2.0;\n"
+    "varying vec3 hologramLocalPosition;\n"
+    "void vertex() {\n"
+    "    hologramLocalPosition = POSITION;\n"
+    "}\n"
+    "void fragment() {\n"
+    "    float phase = hologramLocalPosition.y * hologramDensity - TIME * hologramSpeed * 6.2831853;\n"
+    "    float scanline = 0.5 + 0.5 * sin(phase);\n"
+    "    scanline = pow(scanline, 8.0);\n"
+    "    float flicker = 0.96 + 0.04 * sin(TIME * 41.0);\n"
+    "    float brightness = 0.35 + scanline * 0.65;\n"
+    "    float eventTick = floor(TIME * 9.0);\n"
+    "    float band = floor(hologramLocalPosition.y * 13.0);\n"
+    "    float noise = fract(sin(eventTick * 37.5 + band * 17.13) * 43758.5453);\n"
+    "    float dropout = step(0.985, noise);\n"
+    "    ALBEDO = hologramColor * hologramIntensity * brightness * flicker * (1.0 + dropout * 0.2);\n"
+    "    ALPHA *= hologramOpacity * (0.30 + scanline * 0.35) * flicker * (1.0 - dropout * 0.8);\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildHologram(Color color, float opacity, float scanlineDensity, float scrollSpeed, float hdrIntensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_HOLOGRAM_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_HOLOGRAM;
+
+    built.mode.overrideMask =
+        R3D_RENDER_MODE_OVERRIDE_UNLIT |
+        R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY |
+        R3D_RENDER_MODE_OVERRIDE_BLEND |
+        R3D_RENDER_MODE_OVERRIDE_SHADOW;
+
+    built.mode.unlit = true;
+    built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
+    built.mode.blendMode = R3D_BLEND_ALPHA;
+    built.mode.shadowCastMode = R3D_SHADOW_CAST_DISABLED;
+
+    Vector3 linearColor = r3d_mode_color_linear(color);
+
+    opacity = isfinite(opacity) ? r3d_mode_clamp01(opacity) : 0.7f;
+    scanlineDensity = isfinite(scanlineDensity) ? fmaxf(scanlineDensity, 0.0f) : 25.0f;
+    scrollSpeed = isfinite(scrollSpeed) ? scrollSpeed : 1.0f;
+    hdrIntensity = isfinite(hdrIntensity) ? fmaxf(hdrIntensity, 0.0f) : 2.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "hologramColor", &linearColor);
+    R3D_SetSurfaceEffectUniform(built.effect, "hologramOpacity", &opacity);
+    R3D_SetSurfaceEffectUniform(built.effect, "hologramDensity", &scanlineDensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "hologramSpeed", &scrollSpeed);
+    R3D_SetSurfaceEffectUniform(built.effect, "hologramIntensity", &hdrIntensity);
+
+    return built;
+}
+
+/*
+ * DISSOLVE
+ *
+ * Procedural 3D value noise in object-local space.
+ * Discards fragments in both visible rendering and shadow passes.
+ * Adds an emissive edge near the dissolve boundary.
+ */
+static const char R3D_DISSOLVE_SOURCE[] =
+    "uniform float dissolveProgress = 0.0;\n"
+    "uniform float dissolveScale = 4.0;\n"
+    "uniform float dissolveEdgeWidth = 0.08;\n"
+    "uniform float dissolveEdgeIntensity = 3.0;\n"
+    "uniform vec3 dissolveEdgeColor = vec3(1.0, 0.2, 0.0);\n"
+    "varying vec3 dissolveLocalPosition;\n"
+    "float dissolveHash(vec3 p) {\n"
+    "    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);\n"
+    "}\n"
+    "float dissolveNoise(vec3 p) {\n"
+    "    vec3 i = floor(p);\n"
+    "    vec3 f = fract(p);\n"
+    "    f = f * f * (3.0 - 2.0 * f);\n"
+    "    float a = mix(dissolveHash(i), dissolveHash(i + vec3(1,0,0)), f.x);\n"
+    "    float b = mix(dissolveHash(i + vec3(0,1,0)), dissolveHash(i + vec3(1,1,0)), f.x);\n"
+    "    float c = mix(dissolveHash(i + vec3(0,0,1)), dissolveHash(i + vec3(1,0,1)), f.x);\n"
+    "    float d = mix(dissolveHash(i + vec3(0,1,1)), dissolveHash(i + vec3(1,1,1)), f.x);\n"
+    "    return mix(mix(a,b,f.y), mix(c,d,f.y), f.z);\n"
+    "}\n"
+    "void vertex() {\n"
+    "    dissolveLocalPosition = POSITION;\n"
+    "}\n"
+    "void fragment() {\n"
+    "    float progress = clamp(dissolveProgress, 0.0, 1.0);\n"
+    "    if (progress >= 1.0) discard;\n"
+    "    if (progress <= 0.0) return;\n"
+    "    float noise = dissolveNoise(dissolveLocalPosition * dissolveScale);\n"
+    "    if (noise < progress) discard;\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    float edge = 1.0 - smoothstep(progress, progress + max(dissolveEdgeWidth, 0.0001), noise);\n"
+    "    vec3 glow = dissolveEdgeColor * dissolveEdgeIntensity * edge;\n"
+    "#if defined(UNLIT) || defined(PROBE_UNLIT)\n"
+    "    ALBEDO += glow;\n"
+    "#else\n"
+    "    EMISSION += glow;\n"
+    "#endif\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildDissolve(Color edgeColor, float progress, float noiseScale, float edgeWidth, float edgeIntensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_DISSOLVE_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_DISSOLVE;
+
+    Vector3 linearColor = r3d_mode_color_linear(edgeColor);
+
+    progress = isfinite(progress) ? r3d_mode_clamp01(progress) : 0.0f;
+    noiseScale = isfinite(noiseScale) ? fmaxf(noiseScale, 0.01f) : 4.0f;
+    edgeWidth = isfinite(edgeWidth) ? r3d_mode_clamp01(edgeWidth) : 0.08f;
+    edgeIntensity = isfinite(edgeIntensity) ? fmaxf(edgeIntensity, 0.0f) : 3.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "dissolveProgress", &progress);
+    R3D_SetSurfaceEffectUniform(built.effect, "dissolveScale", &noiseScale);
+    R3D_SetSurfaceEffectUniform(built.effect, "dissolveEdgeWidth", &edgeWidth);
+    R3D_SetSurfaceEffectUniform(built.effect, "dissolveEdgeIntensity", &edgeIntensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "dissolveEdgeColor", &linearColor);
+
+    return built;
+}
+
+/*
+ * EMISSION PULSE
+ *
+ * Adds time-dependent HDR emission.
+ * The original albedo, PBR properties, and transparency stay intact.
+ */
+static const char R3D_EMISSION_PULSE_SOURCE[] =
+    "uniform vec3 pulseColor = vec3(1.0);\n"
+    "uniform float pulseMinIntensity = 0.3;\n"
+    "uniform float pulseMaxIntensity = 2.0;\n"
+    "uniform float pulseFrequency = 1.0;\n"
+    "void fragment() {\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    float phase = TIME * pulseFrequency * 6.2831853;\n"
+    "    float wave = 0.5 - 0.5 * cos(phase);\n"
+    "    wave = wave * wave * (3.0 - 2.0 * wave);\n"
+    "    float intensity = mix(pulseMinIntensity, max(pulseMinIntensity, pulseMaxIntensity), wave);\n"
+    "    vec3 glow = pulseColor * intensity;\n"
+    "#if defined(UNLIT) || defined(PROBE_UNLIT)\n"
+    "    ALBEDO += glow;\n"
+    "#else\n"
+    "    EMISSION += glow;\n"
+    "#endif\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildEmissionPulse(Color color, float minIntensity, float maxIntensity, float frequency)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_EMISSION_PULSE_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_EMISSION_PULSE;
+
+    Vector3 linearColor = r3d_mode_color_linear(color);
+
+    minIntensity = isfinite(minIntensity) ? fmaxf(minIntensity, 0.0f) : 0.0f;
+    maxIntensity = isfinite(maxIntensity) ? fmaxf(maxIntensity, minIntensity) : minIntensity;
+    frequency = isfinite(frequency) ? fmaxf(frequency, 0.01f) : 1.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "pulseColor", &linearColor);
+    R3D_SetSurfaceEffectUniform(built.effect, "pulseMinIntensity", &minIntensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "pulseMaxIntensity", &maxIntensity);
+    R3D_SetSurfaceEffectUniform(built.effect, "pulseFrequency", &frequency);
+
+    return built;
+}
+
+/*
+ * GLITCH
+ *
+ * Quantized time produces sudden changes instead of smooth wobbling.
+ * Horizontal object-local bands randomly displace mesh vertices.
+ * The fragment stage adds subtle color interference.
+ */
+static const char R3D_GLITCH_SOURCE[] =
+    "uniform float glitchAmplitude = 0.06;\n"
+    "uniform float glitchFrequency = 10.0;\n"
+    "uniform float glitchStripeDensity = 18.0;\n"
+    "varying vec3 glitchLocalPosition;\n"
+    "float glitchHash(float value) {\n"
+    "    return fract(sin(value * 127.1) * 43758.5453);\n"
+    "}\n"
+    "void vertex() {\n"
+    "    glitchLocalPosition = POSITION;\n"
+    "    float tick = floor(TIME * max(glitchFrequency, 0.01));\n"
+    "    float band = floor(POSITION.y * glitchStripeDensity);\n"
+    "    float eventValue = glitchHash(tick * 1.37 + 12.45);\n"
+    "    float burst = step(0.85, eventValue);\n"
+    "    float strongBurst = step(0.97, eventValue);\n"
+    "    float bandNoise = glitchHash(band * 14.23 + tick * 3.17);\n"
+    "    float activ = step(0.72, bandNoise);\n"
+    "    float offsetNoise = glitchHash(band * 5.51 + tick * 7.93);\n"
+    "    float displacement = (offsetNoise * 2.0 - 1.0) * glitchAmplitude;\n"
+    "    POSITION.x += displacement * activ * burst * (1.0 + 3.0 * strongBurst);\n"
+    "}\n"
+    "void fragment() {\n"
+    "#if !defined(DEPTH) && !defined(DEPTH_CUBE)\n"
+    "    float tick = floor(TIME * max(glitchFrequency, 0.01));\n"
+    "    float band = floor(glitchLocalPosition.y * glitchStripeDensity);\n"
+    "    float eventValue = glitchHash(tick * 1.37 + 12.45);\n"
+    "    float burst = step(0.85, eventValue);\n"
+    "    float activ = step(0.72, glitchHash(band * 14.23 + tick * 3.17));\n"
+    "    float fineLine = step(0.94, fract(glitchLocalPosition.y * glitchStripeDensity * 5.0 + TIME * 0.3));\n"
+    "    vec3 cell = floor(glitchLocalPosition * 20.0);\n"
+    "    float blockNoise = glitchHash(dot(cell, vec3(3.1, 7.3, 11.9)) + tick * 3.71);\n"
+    "    float fineInterference = fineLine * step(0.8, blockNoise);\n"
+    "    float power = clamp(glitchAmplitude * 6.0, 0.0, 1.0);\n"
+    "    float corruption = power * (0.10 * fineInterference + 0.90 * activ * burst);\n"
+    "    float channelNoise = glitchHash(band * 8.71 + tick * 6.13);\n"
+    "    vec3 coldTint = vec3(0.40, 1.35, 1.55);\n"
+    "    vec3 warmTint = vec3(1.55, 0.45, 1.20);\n"
+    "    vec3 tint = mix(coldTint, warmTint, step(0.5, channelNoise));\n"
+    "    ALBEDO = mix(ALBEDO, ALBEDO * tint, clamp(corruption, 0.0, 1.0));\n"
+    "#if !defined(UNLIT) && !defined(PROBE_UNLIT)\n"
+    "    EMISSION += tint * corruption * 0.35;\n"
+    "#endif\n"
+    "#endif\n"
+    "}\n";
+
+R3D_BuiltRenderMode R3D_RenderModeBuildGlitch(float amplitude, float frequency, float stripeDensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.effect = R3D_LoadSurfaceEffectFromMemory(R3D_GLITCH_SOURCE);
+    if (!built.effect) return built;
+
+    built.kind = R3D_BUILT_MODE_GLITCH;
+
+    amplitude = isfinite(amplitude) ? fmaxf(amplitude, 0.0f) : 0.0f;
+    frequency = isfinite(frequency) ? fmaxf(frequency, 0.01f) : 9.0f;
+    stripeDensity = isfinite(stripeDensity) ? fmaxf(stripeDensity, 0.01f) : 12.0f;
+
+    R3D_SetSurfaceEffectUniform(built.effect, "glitchAmplitude", &amplitude);
+    R3D_SetSurfaceEffectUniform(built.effect, "glitchFrequency", &frequency);
+    R3D_SetSurfaceEffectUniform(built.effect, "glitchStripeDensity", &stripeDensity);
+
+    return built;
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -882,6 +1142,24 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
             built->silhouette.color = color;
             return true;
 
+        case R3D_BUILT_MODE_HOLOGRAM:
+        case R3D_BUILT_MODE_DISSOLVE:
+        case R3D_BUILT_MODE_EMISSION_PULSE:
+        {
+            if (!built->effect) return false;
+
+            Vector3 linearColor = r3d_mode_color_linear(color);
+
+            const char* uniformName =
+                built->kind == R3D_BUILT_MODE_HOLOGRAM ? "hologramColor" :
+                built->kind == R3D_BUILT_MODE_DISSOLVE ? "dissolveEdgeColor" :
+                "pulseColor";
+
+            R3D_SetSurfaceEffectUniform(built->effect, uniformName, &linearColor);
+
+            return true;
+        }
+
         default:
             return false;
     }
@@ -959,6 +1237,61 @@ bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity)
         case R3D_BUILT_MODE_OUTER_GLOW:
         case R3D_BUILT_MODE_DROP_SHADOW:
             built->silhouette.opacity = r3d_mode_clamp01(opacity);
+            return true;
+        case R3D_BUILT_MODE_HOLOGRAM:
+        {
+            if (!built->effect) return false;
+
+            opacity = r3d_mode_clamp01(opacity);
+            R3D_SetSurfaceEffectUniform(built->effect, "hologramOpacity", &opacity);
+
+            return true;
+        }
+
+        default:
+            return false;
+    }
+}
+
+bool R3D_RenderModeSetProgress(R3D_BuiltRenderMode* built, float progress)
+{
+    if (!built || !built->effect ||
+        built->kind != R3D_BUILT_MODE_DISSOLVE ||
+        !isfinite(progress))
+    {
+        return false;
+    }
+
+    progress = r3d_mode_clamp01(progress);
+
+    R3D_SetSurfaceEffectUniform(
+        built->effect,
+        "dissolveProgress",
+        &progress
+    );
+
+    return true;
+}
+
+bool R3D_RenderModeSetStrength(R3D_BuiltRenderMode* built, float strength)
+{
+    if (!built || !built->effect || !isfinite(strength))
+        return false;
+
+    strength = fmaxf(strength, 0.0f);
+
+    switch (built->kind)
+    {
+        case R3D_BUILT_MODE_GLITCH:
+            R3D_SetSurfaceEffectUniform(built->effect, "glitchAmplitude", &strength);
+            return true;
+
+        case R3D_BUILT_MODE_EMISSION_PULSE:
+            R3D_SetSurfaceEffectUniform(built->effect, "pulseMaxIntensity", &strength);
+            return true;
+
+        case R3D_BUILT_MODE_HOLOGRAM:
+            R3D_SetSurfaceEffectUniform(built->effect, "hologramIntensity", &strength);
             return true;
 
         default:
