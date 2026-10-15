@@ -17,14 +17,33 @@ extern "C" {
      * Build once, Push/Pop during drawing, Unload when finished.
      * Treat the returned value as a unique owner; do not unload copies.
      */
+    typedef enum R3D_BuiltRenderModeKind {
+        R3D_BUILT_MODE_GENERIC,
+        R3D_BUILT_MODE_ALPHA_BLEND,
+        R3D_BUILT_MODE_OVERLAY,
+        R3D_BUILT_MODE_XRAY,
+        R3D_BUILT_MODE_OCCLUDED_ONLY,
+        R3D_BUILT_MODE_WIREFRAME,
+        R3D_BUILT_MODE_WIREFRAME_OVERLAY,
+        R3D_BUILT_MODE_SILHOUETTE,
+        R3D_BUILT_MODE_DITHERED,
+        R3D_BUILT_MODE_OUTLINE
+    } R3D_BuiltRenderModeKind;
+
     typedef struct R3D_BuiltRenderMode {
         R3D_RenderMode mode;
         R3D_SurfaceEffect* effect;
+        R3D_BuiltRenderModeKind kind;
     } R3D_BuiltRenderMode;
 
     R3DAPI void R3D_PushBuiltRenderMode(R3D_BuiltRenderMode built);
     R3DAPI void R3D_PopBuiltRenderMode(void);
     R3DAPI void R3D_UnloadBuiltRenderMode(R3D_BuiltRenderMode* built);
+    R3DAPI bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color);
+    R3DAPI bool R3D_RenderModeSetCoverage(R3D_BuiltRenderMode* built, float coverage);
+    R3DAPI bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity);
+    R3DAPI bool R3D_RenderModeSetWidth(R3D_BuiltRenderMode* built, float width);
+    R3DAPI bool R3D_RenderModeSetThroughWalls(R3D_BuiltRenderMode* built, bool enabled);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

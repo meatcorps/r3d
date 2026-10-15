@@ -1,6 +1,7 @@
 #include <r3d/r3d_render_mode_builder.h>
 
 #include "./modules/r3d_render.h"
+#include <math.h>
 
 void R3D_PushBuiltRenderMode(R3D_BuiltRenderMode built)
 {
@@ -47,6 +48,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildAlphaBlend(void)
 
     built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
     built.mode.blendMode = R3D_BLEND_ALPHA;
+    built.kind = R3D_BUILT_MODE_ALPHA_BLEND;
 
     return built;
 }
@@ -61,7 +63,6 @@ R3D_BuiltRenderMode R3D_RenderModeBuildAdditive(void)
 
     built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
     built.mode.blendMode = R3D_BLEND_ADDITIVE;
-
     return built;
 }
 
@@ -136,12 +137,16 @@ static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opa
 
 R3D_BuiltRenderMode R3D_RenderModeBuildXRay(Color color, float opacity)
 {
-    return r3d_mode_build_colored_forward(color, opacity, R3D_COMPARE_ALWAYS);
+    R3D_BuiltRenderMode built = r3d_mode_build_colored_forward(color, opacity, R3D_COMPARE_ALWAYS);
+    built.kind = R3D_BUILT_MODE_XRAY;
+    return built;
 }
 
 R3D_BuiltRenderMode R3D_RenderModeBuildOccludedOnly(Color color, float opacity)
 {
-    return r3d_mode_build_colored_forward(color, opacity, R3D_COMPARE_GREATER);
+    R3D_BuiltRenderMode built = r3d_mode_build_colored_forward(color, opacity, R3D_COMPARE_GREATER);
+    built.kind = R3D_BUILT_MODE_OCCLUDED_ONLY;
+    return built;
 }
 
 R3D_BuiltRenderMode R3D_RenderModeBuildWireframe(Color color)
@@ -156,6 +161,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildWireframe(Color color)
     built.mode.renderPass = R3D_RENDER_PASS_WIREFRAME;
     built.mode.wireColor = color;
     built.mode.cullMode = R3D_CULL_NONE;
+    built.kind = R3D_BUILT_MODE_WIREFRAME;
 
     return built;
 }
@@ -170,6 +176,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildWireframeOverlay(Color color)
 
     built.mode.renderPass = R3D_RENDER_PASS_WIREFRAME_OVERLAY;
     built.mode.wireColor = color;
+    built.kind = R3D_BUILT_MODE_WIREFRAME_OVERLAY;
 
     return built;
 }
@@ -191,8 +198,8 @@ R3D_BuiltRenderMode R3D_RenderModeBuildSilhouette(Color color)
 
     built.mode.unlit = true;
     built.mode.albedoColor = color;
-    built.mode.transparencyMode =
-        color.a == 255 ? R3D_TRANSPARENCY_OPAQUE : R3D_TRANSPARENCY_BLEND;
+    built.mode.transparencyMode = color.a == 255 ? R3D_TRANSPARENCY_OPAQUE : R3D_TRANSPARENCY_BLEND;
+    built.kind = R3D_BUILT_MODE_SILHOUETTE;
 
     built.effect = R3D_LoadSurfaceEffectFromMemory(source);
 
@@ -238,6 +245,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildOverlay(void)
     built.mode.depthCompare = R3D_COMPARE_ALWAYS;
     built.mode.transparencyMode = R3D_TRANSPARENCY_BLEND;
     built.mode.blendMode = R3D_BLEND_ALPHA;
+    built.kind = R3D_BUILT_MODE_OVERLAY;
 
     return built;
 }
@@ -276,6 +284,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildDitheredTransparency(float coverage)
 
     built.mode.overrideMask = R3D_RENDER_MODE_OVERRIDE_TRANSPARENCY;
     built.mode.transparencyMode = R3D_TRANSPARENCY_OPAQUE;
+    built.kind = R3D_BUILT_MODE_DITHERED;
 
     built.effect = R3D_LoadSurfaceEffectFromMemory(source);
 
@@ -357,6 +366,7 @@ R3D_BuiltRenderMode R3D_RenderModeBuildOutline(Color color, float width, bool th
     built.mode.outlineColor = color;
     built.mode.outlineWidth = width;
     built.mode.outlineThroughWalls = throughWalls;
+    built.kind = R3D_BUILT_MODE_OUTLINE;
 
     return built;
 }
@@ -393,4 +403,147 @@ R3D_BuiltRenderMode R3D_RenderModeBuildCustomStencil(
     built.mode.stencilWriteMask = writeMask;
 
     return built;
+}
+
+static unsigned char r3d_mode_opacity_byte(float opacity)
+{
+    opacity = r3d_mode_clamp01(opacity);
+    return (unsigned char)(opacity * 255.0f + 0.5f);
+}
+
+bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
+{
+    if (!built) return false;
+
+    switch (built->kind)
+    {
+    case R3D_BUILT_MODE_XRAY:
+    case R3D_BUILT_MODE_OCCLUDED_ONLY:
+        color.a = built->mode.albedoColor.a;
+        built->mode.albedoColor = color;
+        return true;
+
+    case R3D_BUILT_MODE_WIREFRAME:
+    case R3D_BUILT_MODE_WIREFRAME_OVERLAY:
+        color.a = built->mode.wireColor.a;
+        built->mode.wireColor = color;
+        return true;
+
+    case R3D_BUILT_MODE_SILHOUETTE:
+    {
+        if (!built->effect) return false;
+
+        color.a = built->mode.albedoColor.a;
+        built->mode.albedoColor = color;
+
+        Vector3 rgb = {
+            color.r / 255.0f,
+            color.g / 255.0f,
+            color.b / 255.0f
+        };
+
+        R3D_SetSurfaceEffectUniform(built->effect, "silhouetteColor", &rgb);
+        return true;
+    }
+
+    case R3D_BUILT_MODE_OUTLINE:
+        color.a = built->mode.outlineColor.a;
+        built->mode.outlineColor = color;
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+bool R3D_RenderModeSetCoverage(R3D_BuiltRenderMode* built, float coverage)
+{
+    if (!built || !built->effect ||
+        built->kind != R3D_BUILT_MODE_DITHERED ||
+        !isfinite(coverage))
+    {
+        return false;
+    }
+
+    coverage = r3d_mode_clamp01(coverage);
+    R3D_SetSurfaceEffectUniform(built->effect, "coverage", &coverage);
+
+    return true;
+}
+
+bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity)
+{
+    if (!built || !isfinite(opacity)) return false;
+
+    switch (built->kind)
+    {
+    case R3D_BUILT_MODE_XRAY:
+    case R3D_BUILT_MODE_OCCLUDED_ONLY:
+        built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
+        return true;
+
+    case R3D_BUILT_MODE_SILHOUETTE:
+    {
+        built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
+
+        built->mode.transparencyMode =
+            built->mode.albedoColor.a == 255
+                ? R3D_TRANSPARENCY_OPAQUE
+                : R3D_TRANSPARENCY_BLEND;
+
+        return true;
+    }
+
+    case R3D_BUILT_MODE_ALPHA_BLEND:
+    case R3D_BUILT_MODE_OVERLAY:
+    {
+        if (!built->effect)
+        {
+            static const char source[] =
+                "uniform float opacity = 1.0;\n"
+                "void fragment() {\n"
+                "    ALPHA *= opacity;\n"
+                "}\n";
+
+            built->effect = R3D_LoadSurfaceEffectFromMemory(source);
+
+            if (!built->effect) return false;
+        }
+
+        opacity = r3d_mode_clamp01(opacity);
+        R3D_SetSurfaceEffectUniform(built->effect, "opacity", &opacity);
+
+        return true;
+    }
+
+    default:
+        return false;
+    }
+}
+
+bool R3D_RenderModeSetWidth(R3D_BuiltRenderMode* built, float width)
+{
+    if (!built ||
+        built->kind != R3D_BUILT_MODE_OUTLINE ||
+        !isfinite(width))
+    {
+        return false;
+    }
+
+    if (width < 1.0f) width = 1.0f;
+    if (width > 12.0f) width = 12.0f;
+
+    built->mode.outlineWidth = width;
+
+    return true;
+}
+
+bool R3D_RenderModeSetThroughWalls(R3D_BuiltRenderMode* built, bool enabled)
+{
+    if (!built || built->kind != R3D_BUILT_MODE_OUTLINE)
+        return false;
+
+    built->mode.outlineThroughWalls = enabled;
+
+    return true;
 }
