@@ -906,11 +906,14 @@ bool r3d_render_init(void)
         R3D_MOD_RENDER.list[i] = R3D_LIST_CREATE(int, cap);
     }
 
-    R3D_MOD_RENDER.calls          = R3D_LIST_CREATE(r3d_render_call_t, cap);
-    R3D_MOD_RENDER.groupIndices   = R3D_LIST_CREATE(int, cap);
-    R3D_MOD_RENDER.sortCache      = R3D_LIST_CREATE(r3d_render_sort_t, cap);
-    R3D_MOD_RENDER.modeStack      = R3D_LIST_CREATE(R3D_RenderMode, 8);
-    R3D_MOD_RENDER.builtModeStack = R3D_LIST_CREATE(bool, 8);
+    R3D_MOD_RENDER.calls            = R3D_LIST_CREATE(r3d_render_call_t, cap);
+    R3D_MOD_RENDER.groupIndices     = R3D_LIST_CREATE(int, cap);
+    R3D_MOD_RENDER.sortCache        = R3D_LIST_CREATE(r3d_render_sort_t, cap);
+    R3D_MOD_RENDER.modeStack        = R3D_LIST_CREATE(R3D_RenderMode, 8);
+    R3D_MOD_RENDER.builtModeStack   = R3D_LIST_CREATE(r3d_render_built_scope_t, 8);
+    R3D_MOD_RENDER.silhouetteScopes = R3D_LIST_CREATE(r3d_silhouette_scope_t, 8);
+    R3D_MOD_RENDER.silhouetteStack  = R3D_LIST_CREATE(int, 8);
+    R3D_MOD_RENDER.silhouetteCalls  = R3D_LIST_CREATE(r3d_silhouette_call_t, cap);
 
     R3D_MOD_RENDER.activeCluster = -1;
 
@@ -1031,6 +1034,8 @@ void r3d_render_quit(void)
 
     if (R3D_MOD_RENDER.outlineHorizontalProgram) glDeleteProgram(R3D_MOD_RENDER.outlineHorizontalProgram);
     if (R3D_MOD_RENDER.outlineCompositeProgram) glDeleteProgram(R3D_MOD_RENDER.outlineCompositeProgram);
+    if (R3D_MOD_RENDER.silhouetteHorizontalProgram) glDeleteProgram(R3D_MOD_RENDER.silhouetteHorizontalProgram);
+    if (R3D_MOD_RENDER.silhouetteCompositeProgram) glDeleteProgram(R3D_MOD_RENDER.silhouetteCompositeProgram);
     if (R3D_MOD_RENDER.globalVao) glDeleteVertexArrays(1, &R3D_MOD_RENDER.globalVao);
     if (R3D_MOD_RENDER.globalVbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalVbo);
     if (R3D_MOD_RENDER.globalEbo) glDeleteBuffers(1, &R3D_MOD_RENDER.globalEbo);
@@ -1069,6 +1074,9 @@ void r3d_render_quit(void)
     R3D_LIST_DESTROY(R3D_MOD_RENDER.calls);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.modeStack);
     R3D_LIST_DESTROY(R3D_MOD_RENDER.builtModeStack);
+    R3D_LIST_DESTROY(R3D_MOD_RENDER.silhouetteScopes);
+    R3D_LIST_DESTROY(R3D_MOD_RENDER.silhouetteStack);
+    R3D_LIST_DESTROY(R3D_MOD_RENDER.silhouetteCalls);
 
     /* --- Realease free lists --- */
 
@@ -1336,6 +1344,9 @@ void r3d_render_clear(void)
     r3d_effect_clear();
     R3D_LIST_CLEAR(R3D_MOD_RENDER.modeStack);
     R3D_LIST_CLEAR(R3D_MOD_RENDER.builtModeStack);
+    R3D_LIST_CLEAR(R3D_MOD_RENDER.silhouetteScopes);
+    R3D_LIST_CLEAR(R3D_MOD_RENDER.silhouetteStack);
+    R3D_LIST_CLEAR(R3D_MOD_RENDER.silhouetteCalls);
 
     R3D_MOD_RENDER.groupCulled = false;
 
@@ -1378,9 +1389,25 @@ void r3d_render_built_mode_push(R3D_BuiltRenderMode built)
 {
     r3d_render_mode_push(built.mode);
 
-    bool hasEffect = built.effect && r3d_effect_push(built.effect);
+    r3d_render_built_scope_t entry = {0};
+    entry.hasEffect = built.effect && r3d_effect_push(built.effect);
 
-    R3D_LIST_PUSH(R3D_MOD_RENDER.builtModeStack, hasEffect);
+    if (built.kind == R3D_BUILT_MODE_OUTER_GLOW ||
+        built.kind == R3D_BUILT_MODE_DROP_SHADOW)
+    {
+        r3d_silhouette_scope_t scope = {
+            .kind = built.kind,
+            .style = built.silhouette
+        };
+
+        int index = (int)R3D_LIST_LENGTH(R3D_MOD_RENDER.silhouetteScopes);
+        R3D_LIST_PUSH(R3D_MOD_RENDER.silhouetteScopes, scope);
+        R3D_LIST_PUSH(R3D_MOD_RENDER.silhouetteStack, index);
+
+        entry.hasSilhouette = true;
+    }
+
+    R3D_LIST_PUSH(R3D_MOD_RENDER.builtModeStack, entry);
 }
 
 void r3d_render_built_mode_pop(void)
@@ -1391,10 +1418,13 @@ void r3d_render_built_mode_pop(void)
         return;
     }
 
-    bool hasEffect = false;
-    R3D_LIST_POP(R3D_MOD_RENDER.builtModeStack, &hasEffect);
+    r3d_render_built_scope_t entry = {0};
+    R3D_LIST_POP(R3D_MOD_RENDER.builtModeStack, &entry);
 
-    if (hasEffect)
+    if (entry.hasSilhouette)
+        R3D_LIST_POP(R3D_MOD_RENDER.silhouetteStack, NULL);
+
+    if (entry.hasEffect)
         r3d_effect_pop();
 
     r3d_render_mode_pop();
@@ -1628,6 +1658,23 @@ void r3d_render_call_push(const r3d_render_call_t* call)
     // Push this draw call and its group index
     R3D_LIST_PUSH(R3D_MOD_RENDER.groupIndices, groupIndex);
     R3D_LIST_PUSH(R3D_MOD_RENDER.calls, *call);
+
+    if (call->type == R3D_RENDER_CALL_MESH)
+    {
+        size_t count = R3D_LIST_LENGTH(R3D_MOD_RENDER.silhouetteStack);
+
+        for (size_t i = 0; i < count; i++)
+        {
+            int scopeIndex = R3D_LIST_GET(R3D_MOD_RENDER.silhouetteStack, int, i);
+
+            r3d_silhouette_call_t membership = {
+                .scopeIndex = scopeIndex,
+                .callIndex = callIndex
+            };
+
+            R3D_LIST_PUSH(R3D_MOD_RENDER.silhouetteCalls, membership);
+        }
+    }
 
     R3D_MOD_RENDER.stats.submittedCalls++;
 

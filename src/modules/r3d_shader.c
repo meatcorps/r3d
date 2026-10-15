@@ -1012,6 +1012,7 @@ bool r3d_shader_load_scene_unlit(r3d_shader_custom_t *custom)
     GET_LOCATION(unlit, uBillboard);
     GET_LOCATION(unlit, uAlphaCutoff);
     GET_LOCATION(unlit, uCutoffSign);
+    GET_LOCATION(unlit, uSilhouetteMask);
 
     USE_SHADER(unlit);
 

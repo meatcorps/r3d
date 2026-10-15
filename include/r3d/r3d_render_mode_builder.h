@@ -37,7 +37,9 @@ extern "C" {
         R3D_BUILT_MODE_ALBEDO_TEXTURE,
         R3D_BUILT_MODE_EMISSION_TEXTURE,
         R3D_BUILT_MODE_RIM_GLOW,
-        R3D_BUILT_MODE_FRESNEL_TRANSPARENCY
+        R3D_BUILT_MODE_FRESNEL_TRANSPARENCY,
+        R3D_BUILT_MODE_OUTER_GLOW,
+        R3D_BUILT_MODE_DROP_SHADOW
     } R3D_BuiltRenderModeKind;
 
     /*
@@ -53,10 +55,24 @@ extern "C" {
         R3D_TEXTURE_BLEND_SCREEN
     } R3D_TextureBlendMode;
 
+    /*
+     * Frame-local screen-space silhouette appearance.
+     * Parameters are copied at PushBuiltRenderMode time.
+     */
+    typedef struct R3D_SilhouetteStyle {
+        Color color;
+        Vector2 offset;
+        float radius;
+        float spread;
+        float intensity;
+        float opacity;
+    } R3D_SilhouetteStyle;
+
     typedef struct R3D_BuiltRenderMode {
         R3D_RenderMode mode;
         R3D_SurfaceEffect* effect;
         R3D_BuiltRenderModeKind kind;
+        R3D_SilhouetteStyle silhouette;
     } R3D_BuiltRenderMode;
 
     R3DAPI void R3D_PushBuiltRenderMode(R3D_BuiltRenderMode built);
@@ -103,6 +119,9 @@ extern "C" {
      */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildRimGlow(Color color, float intensity, float power);
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildFresnelTransparency(float frontOpacity, float edgeOpacity, float power);
+    /* Screen-space silhouette effects. Parameters use internal pixels. */
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildOuterGlow(Color color, float radius, float spread, float intensity);
+    R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDropShadow(Color color, Vector2 offset, float blurRadius, float spread, float opacity);
 
     /* Built-in state-based modes */
     R3DAPI R3D_BuiltRenderMode R3D_RenderModeBuildDefault(void);

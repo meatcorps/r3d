@@ -885,6 +885,7 @@ typedef struct {
     r3d_shader_uniform_sampler_t uAlbedoMap;
     r3d_shader_uniform_float_t uAlphaCutoff;
     r3d_shader_uniform_float_t uCutoffSign;
+    r3d_shader_uniform_int_t uSilhouetteMask;
 } r3d_shader_scene_unlit_t;
 
 typedef struct {

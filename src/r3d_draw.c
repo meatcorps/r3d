@@ -99,6 +99,104 @@ static const char* R3D_OUTLINE_COMPOSITE_FRAGMENT =
     "    fragColor = vec4(bestColor, 1.0);\n"
     "}\n";
 
+/*
+ * Silhouette blur, horizontal pass.
+ *
+ * The original mask stores coverage in alpha.
+ * The horizontal target stores blurred coverage in alpha and
+ * the nearest source depth packed into RGB8 for occlusion testing.
+ */
+static const char* R3D_SILHOUETTE_HORIZONTAL_FRAGMENT =
+    "#version 330 core\n"
+    "uniform sampler2D uMask;\n"
+    "uniform float uRadius;\n"
+    "uniform float uSpread;\n"
+    "out vec4 fragColor;\n"
+    "vec3 packDepth(float value) {\n"
+    "    vec3 p = fract(min(value, 0.99999994) * vec3(1.0,255.0,65025.0));\n"
+    "    p.xy -= p.yz / 255.0;\n"
+    "    return p;\n"
+    "}\n"
+    "float unpackDepth(vec3 p) {\n"
+    "    return dot(p,vec3(1.0,1.0/255.0,1.0/65025.0));\n"
+    "}\n"
+    "void main() {\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    ivec2 size = textureSize(uMask, 0);\n"
+    "    float sigma = max(0.5, uRadius * 0.38);\n"
+    "    int taps = int(min(32.0, ceil(uRadius + uSpread)));\n"
+    "    float sum = 0.0;\n"
+    "    float total = 0.0;\n"
+    "    float closest = 1.0;\n"
+    "    for (int i = -32; i <= 32; ++i) {\n"
+    "        if (abs(i) > taps) continue;\n"
+    "        ivec2 q = p + ivec2(i,0);\n"
+    "        if (q.x < 0 || q.x >= size.x) continue;\n"
+    "        float d = max(abs(float(i)) - uSpread, 0.0);\n"
+    "        float w = exp(-0.5 * (d / sigma) * (d / sigma));\n"
+    "        vec4 source = texelFetch(uMask,q,0);\n"
+    "        float coverage = source.a;\n"
+    "        sum += coverage * w;\n"
+    "        total += w;\n"
+    "        if (coverage > 0.001)\n"
+    "            closest = min(closest,unpackDepth(source.rgb));\n"
+    "    }\n"
+    "    float coverage = total > 0.0 ? sum / total : 0.0;\n"
+    "    fragColor = vec4(packDepth(closest),coverage);\n"
+    "}\n";
+
+/*
+ * Silhouette vertical/composite pass.
+ *
+ * Blur vertically, apply the shadow offset, and depth-test
+ * the effect against the existing scene depth.
+ */
+static const char* R3D_SILHOUETTE_COMPOSITE_FRAGMENT =
+    "#version 330 core\n"
+    "uniform sampler2D uMask;\n"
+    "uniform sampler2D uHorizontal;\n"
+    "uniform vec2 uOffset;\n"
+    "uniform vec3 uColor;\n"
+    "uniform float uRadius;\n"
+    "uniform float uSpread;\n"
+    "uniform float uIntensity;\n"
+    "uniform float uOpacity;\n"
+    "out vec4 fragColor;\n"
+    "float unpackDepth(vec3 p) {\n"
+    "    return dot(p,vec3(1.0,1.0/255.0,1.0/65025.0));\n"
+    "}\n"
+    "void main() {\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    ivec2 size = textureSize(uHorizontal,0);\n"
+    "    if (texelFetch(uMask,p,0).a > 0.001) discard;\n"
+    "    ivec2 offset = ivec2(round(vec2(uOffset.x,-uOffset.y)));\n"
+    "    ivec2 center = p - offset;\n"
+    "    if (any(lessThan(center,ivec2(0))) ||\n"
+    "        any(greaterThanEqual(center,size))) discard;\n"
+    "    float sigma = max(0.5,uRadius * 0.38);\n"
+    "    int taps = int(min(32.0,ceil(uRadius + uSpread)));\n"
+    "    float sum = 0.0;\n"
+    "    float total = 0.0;\n"
+    "    float closest = 1.0;\n"
+    "    for (int i = -32; i <= 32; ++i) {\n"
+    "        if (abs(i) > taps) continue;\n"
+    "        ivec2 q = center + ivec2(0,i);\n"
+    "        if (q.y < 0 || q.y >= size.y) continue;\n"
+    "        float d = max(abs(float(i)) - uSpread,0.0);\n"
+    "        float w = exp(-0.5 * (d / sigma) * (d / sigma));\n"
+    "        vec4 sampleValue = texelFetch(uHorizontal,q,0);\n"
+    "        sum += sampleValue.a * w;\n"
+    "        total += w;\n"
+    "        if (sampleValue.a > 0.001)\n"
+    "            closest = min(closest,unpackDepth(sampleValue.rgb));\n"
+    "    }\n"
+    "    float coverage = total > 0.0 ? sum / total : 0.0;\n"
+    "    float opacity = clamp(coverage * uOpacity,0.0,1.0);\n"
+    "    if (opacity <= 0.001 || closest >= 1.0) discard;\n"
+    "    gl_FragDepth = min(1.0, closest + 0.000001);\n"
+    "    fragColor = vec4(uColor * uIntensity,opacity);\n"
+    "}\n";
+
 static GLuint r3d_outline_compile_stage(GLenum type, const char* source)
 {
     GLuint shader = glCreateShader(type);
@@ -212,7 +310,7 @@ static void raster_probe_unlit(const r3d_render_call_t* call, const r3d_env_prob
 static void raster_geometry(const r3d_render_call_t* call);
 static void raster_decal(const r3d_render_call_t* call);
 static void raster_forward(const r3d_render_call_t* call);
-static void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor);
+static void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor, bool silhouetteMask);
 static void raster_wireframe(const r3d_render_call_t* call);
 static void pass_scene_depth_only(void);
 static void pass_scene_stencil_mask(r3d_target_t sceneTarget);
@@ -238,6 +336,7 @@ static void pass_deferred_volumetric_fog(r3d_target_t sceneTarget);
 static void pass_scene_forward(r3d_target_t sceneTarget);
 static void pass_scene_background(r3d_target_t sceneTarget);
 static void pass_scene_outlines(r3d_target_t sceneTarget);
+static void pass_scene_silhouettes(r3d_target_t sceneTarget);
 
 static r3d_target_t pass_post_setup(r3d_target_t sceneTarget);
 static r3d_target_t pass_post_dof(r3d_target_t sceneTarget);
@@ -784,6 +883,7 @@ void R3D_End(void)
     }
 
     pass_scene_forward(sceneTarget);
+    pass_scene_silhouettes(sceneTarget);
     pass_scene_outlines(sceneTarget);
 
     /* --- Applying effects over the scene and final blit --- */
@@ -2361,7 +2461,7 @@ void raster_forward(const r3d_render_call_t* call)
     }
 }
 
-void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor)
+void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireColor, bool silhouetteMask)
 {
     R3D_ASSERT(call->type == R3D_RENDER_CALL_MESH); //< Paranoid assert, should be fine
 
@@ -2392,6 +2492,8 @@ void raster_unlit(const r3d_render_call_t* call, bool opaque, const Color* wireC
             R3D_SHADER_SELECT(scene.unlit, shader)->id
         );
     }
+
+    R3D_SHADER_SET_INT_SELECT(scene.unlit, shader, uSilhouetteMask, silhouetteMask);
 
     /* --- Send matrices --- */
 
@@ -2503,7 +2605,7 @@ void raster_wireframe(const r3d_render_call_t* call)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.0f);
 
-    raster_unlit(call, false, &call->mesh.wireColor);
+    raster_unlit(call, false, &call->mesh.wireColor, false);
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
@@ -2683,7 +2785,7 @@ void pass_scene_depth_only(void)
     )
     {
         apply_camera_depth_write(call, true);
-        raster_unlit(call, true, NULL);
+        raster_unlit(call, true, NULL, false);
     }
 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -2713,7 +2815,7 @@ void pass_scene_stencil_mask(r3d_target_t sceneTarget)
         R3D_RENDER_LIST_STENCIL_MASK
     )
     {
-        raster_unlit(call, false, NULL);
+        raster_unlit(call, false, NULL, false);
     }
 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -3310,7 +3412,7 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     )
     {
         apply_camera_depth_write(call, true);
-        raster_unlit(call, true, NULL);
+        raster_unlit(call, true, NULL, false);
     }
 
     #undef COND
@@ -3340,7 +3442,7 @@ void pass_scene_forward(r3d_target_t sceneTarget)
 
         if (call->mesh.material.unlit)
         {
-            raster_unlit(call, false, NULL);
+            raster_unlit(call, false, NULL, false);
         }
         else
         {
@@ -3363,7 +3465,7 @@ void pass_scene_forward(r3d_target_t sceneTarget)
 
         if (call->mesh.material.unlit)
         {
-            raster_unlit(call, false, NULL);
+            raster_unlit(call, false, NULL, false);
         }
         else
         {
@@ -3403,7 +3505,7 @@ void pass_scene_forward(r3d_target_t sceneTarget)
 
         if (call->mesh.material.unlit)
         {
-            raster_unlit(call, false, NULL);
+            raster_unlit(call, false, NULL, false);
         }
         else
         {
@@ -3419,6 +3521,207 @@ void pass_scene_forward(r3d_target_t sceneTarget)
     r3d_driver_set_depth_mask(GL_TRUE);
     r3d_driver_set_depth_offset(0.0f, 0.0f);
     r3d_driver_set_depth_range(0.0f, 1.0f);
+}
+
+/*
+ * Render Photoshop-style silhouette effects for explicitly scoped meshes.
+ *
+ * Each pushed scope owns one combined mask, regardless of how many meshes
+ * were submitted while it was active.
+ */
+static void pass_scene_silhouettes(r3d_target_t sceneTarget)
+{
+    if (R3D_LIST_EMPTY(R3D_MOD_RENDER.silhouetteScopes) ||
+        R3D_LIST_EMPTY(R3D_MOD_RENDER.silhouetteCalls))
+    {
+        return;
+    }
+
+    if (!R3D_MOD_RENDER.silhouetteHorizontalProgram)
+    {
+        R3D_MOD_RENDER.silhouetteHorizontalProgram =
+            r3d_outline_create_program(R3D_SILHOUETTE_HORIZONTAL_FRAGMENT);
+    }
+
+    if (!R3D_MOD_RENDER.silhouetteCompositeProgram)
+    {
+        R3D_MOD_RENDER.silhouetteCompositeProgram =
+            r3d_outline_create_program(R3D_SILHOUETTE_COMPOSITE_FRAGMENT);
+    }
+
+    GLuint horizontal = R3D_MOD_RENDER.silhouetteHorizontalProgram;
+    GLuint composite = R3D_MOD_RENDER.silhouetteCompositeProgram;
+
+    if (!horizontal || !composite)
+        return;
+
+    size_t scopeCount = R3D_LIST_LENGTH(R3D_MOD_RENDER.silhouetteScopes);
+    size_t membershipCount = R3D_LIST_LENGTH(R3D_MOD_RENDER.silhouetteCalls);
+
+    for (size_t scopeIndex = 0; scopeIndex < scopeCount; scopeIndex++)
+    {
+        const r3d_silhouette_scope_t* scope =
+            &R3D_LIST_GET(R3D_MOD_RENDER.silhouetteScopes, r3d_silhouette_scope_t, scopeIndex);
+
+        const R3D_SilhouetteStyle* style = &scope->style;
+
+        if (style->opacity <= 0.0f ||
+            style->intensity <= 0.0f)
+        {
+            continue;
+        }
+
+        /*
+         * Pass 1: one combined mask for all meshes in this scope.
+         */
+        r3d_driver_set_depth_mask(GL_FALSE);
+        r3d_driver_disable(GL_BLEND);
+        r3d_driver_disable(GL_STENCIL_TEST);
+
+        R3D_TARGET_BIND_CLEAR(0, false, R3D_TARGET_OUTLINE_MASK);
+        R3D_TARGET_BIND_LOAD(0, true, R3D_TARGET_OUTLINE_MASK);
+
+        r3d_driver_enable(GL_DEPTH_TEST);
+        r3d_driver_set_depth_func(GL_LEQUAL);
+
+        bool drewMask = false;
+
+        for (size_t i = 0; i < membershipCount; i++)
+        {
+            const r3d_silhouette_call_t* membership =
+                &R3D_LIST_GET(R3D_MOD_RENDER.silhouetteCalls, r3d_silhouette_call_t, i);
+
+            if (membership->scopeIndex != (int)scopeIndex)
+                continue;
+
+            r3d_render_call_t* call =
+                &R3D_LIST_GET(R3D_MOD_RENDER.calls, r3d_render_call_t, membership->callIndex);
+
+            if (call->type != R3D_RENDER_CALL_MESH ||
+                !IS_MESH_VISIBLE_CAMERA(call->mesh.instance) ||
+                IS_SHADOW_CAST_ONLY(call->mesh.instance.shadowCastMode) ||
+                !r3d_render_call_is_visible(call, &R3D.viewState.frustum))
+            {
+                continue;
+            }
+
+            R3D_Material originalMaterial = call->mesh.material;
+
+            bool originalStencilOverride = call->mesh.stencilEnableOverride;
+            bool originalStencilEnabled = call->mesh.stencilEnabled;
+            bool originalStencilWriteOverride = call->mesh.stencilWriteOverride;
+            uint8_t originalStencilWriteMask = call->mesh.stencilWriteMask;
+
+            call->mesh.material.albedo.color = WHITE;
+            call->mesh.material.alphaCutoff = 0.001f;
+            call->mesh.material.unlit = true;
+            call->mesh.material.depth.mode = R3D_COMPARE_LEQUAL;
+            call->mesh.material.depth.offsetFactor = 0.0f;
+            call->mesh.material.depth.offsetUnits = 0.0f;
+
+            call->mesh.stencilEnableOverride = true;
+            call->mesh.stencilEnabled = false;
+            call->mesh.stencilWriteOverride = true;
+            call->mesh.stencilWriteMask = 0;
+
+            apply_camera_depth_write(call, false);
+            raster_unlit(call, true, NULL, true);
+
+            call->mesh.material = originalMaterial;
+            call->mesh.stencilEnableOverride = originalStencilOverride;
+            call->mesh.stencilEnabled = originalStencilEnabled;
+            call->mesh.stencilWriteOverride = originalStencilWriteOverride;
+            call->mesh.stencilWriteMask = originalStencilWriteMask;
+
+            drewMask = true;
+        }
+
+        if (!drewMask)
+            continue;
+
+        /*
+         * Pass 2: horizontal blur.
+         */
+        r3d_driver_disable(GL_DEPTH_TEST);
+        r3d_driver_disable(GL_STENCIL_TEST);
+        r3d_driver_disable(GL_CULL_FACE);
+        r3d_driver_disable(GL_BLEND);
+
+        R3D_TARGET_BIND_CLEAR(0, false, R3D_TARGET_OUTLINE_HORIZONTAL);
+
+        glUseProgram(horizontal);
+
+        glUniform1i(glGetUniformLocation(horizontal, "uMask"), R3D_SHADER_SAMPLER_SOURCE_2D_0);
+        glUniform1f(glGetUniformLocation(horizontal, "uRadius"), style->radius);
+        glUniform1f(glGetUniformLocation(horizontal, "uSpread"), style->spread);
+
+        r3d_shader_bind_sampler(
+            R3D_SHADER_SAMPLER_SOURCE_2D_0,
+            r3d_target_get(R3D_TARGET_OUTLINE_MASK)
+        );
+
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        /*
+         * Pass 3: vertical blur and depth-tested composition.
+         */
+        R3D_TARGET_BIND_LOAD(0, true, sceneTarget);
+
+        r3d_driver_enable(GL_DEPTH_TEST);
+        r3d_driver_set_depth_func(GL_LEQUAL);
+        r3d_driver_set_depth_mask(GL_FALSE);
+        r3d_driver_enable(GL_BLEND);
+
+        if (scope->kind == R3D_BUILT_MODE_OUTER_GLOW)
+        {
+            r3d_driver_set_blend_func_separate(
+                GL_FUNC_ADD,
+                GL_SRC_ALPHA, GL_ONE,
+                GL_ZERO, GL_ONE
+            );
+        }
+        else
+        {
+            r3d_driver_set_blend_func_separate(
+                GL_FUNC_ADD,
+                GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                GL_ZERO, GL_ONE
+            );
+        }
+
+        Vector4 linearColor = r3d_color_srgb_to_linear_vec4(style->color);
+
+        glUseProgram(composite);
+
+        glUniform1i(glGetUniformLocation(composite, "uMask"), R3D_SHADER_SAMPLER_SOURCE_2D_0);
+        glUniform1i(glGetUniformLocation(composite, "uHorizontal"), R3D_SHADER_SAMPLER_SOURCE_2D_1);
+        glUniform2f(glGetUniformLocation(composite, "uOffset"), style->offset.x, style->offset.y);
+        glUniform3f(glGetUniformLocation(composite, "uColor"), linearColor.x, linearColor.y, linearColor.z);
+        glUniform1f(glGetUniformLocation(composite, "uRadius"), style->radius);
+        glUniform1f(glGetUniformLocation(composite, "uSpread"), style->spread);
+        glUniform1f(glGetUniformLocation(composite, "uIntensity"), style->intensity);
+        glUniform1f(glGetUniformLocation(composite, "uOpacity"), style->opacity * linearColor.w);
+
+        r3d_shader_bind_sampler(
+            R3D_SHADER_SAMPLER_SOURCE_2D_0,
+            r3d_target_get(R3D_TARGET_OUTLINE_MASK)
+        );
+
+        r3d_shader_bind_sampler(
+            R3D_SHADER_SAMPLER_SOURCE_2D_1,
+            r3d_target_get(R3D_TARGET_OUTLINE_HORIZONTAL)
+        );
+
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        R3D_MOD_SHADER.currentProgram = 0;
+    }
+
+    r3d_driver_disable(GL_BLEND);
+    r3d_driver_disable(GL_DEPTH_TEST);
+    r3d_driver_set_depth_mask(GL_TRUE);
+
+    R3D_MOD_SHADER.currentProgram = 0;
 }
 
 static void pass_scene_outlines(r3d_target_t sceneTarget)
@@ -3475,7 +3778,7 @@ static void pass_scene_outlines(r3d_target_t sceneTarget)
         maskColor.a = (unsigned char)(width * (255.0f / 12.0f) + 0.5f);
 
         // Reuse the actual draw call, transform, skinning and instancing.
-        raster_unlit(call, false, &maskColor);
+        raster_unlit(call, false, &maskColor, false);
     }
 
     /* --- Pass 2: horizontal dilation with remaining vertical radius. --- */

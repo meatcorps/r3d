@@ -461,6 +461,47 @@ R3D_BuiltRenderMode R3D_RenderModeBuildFresnelTransparency(float frontOpacity, f
     return built;
 }
 
+/*
+ * Screen-space silhouette builders.
+ *
+ * These have no surface shader and do not change their source material.
+ * The renderer captures their parameters and selected draw submissions.
+ *
+ * Blur radius: 0..24 pixels.
+ * Spread: 0..8 pixels.
+ */
+R3D_BuiltRenderMode R3D_RenderModeBuildOuterGlow(Color color, float radius, float spread, float intensity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.kind = R3D_BUILT_MODE_OUTER_GLOW;
+    built.silhouette.color = color;
+    built.silhouette.radius = isfinite(radius) ? fmaxf(0.0f, fminf(radius, 24.0f)) : 0.0f;
+    built.silhouette.spread = isfinite(spread) ? fmaxf(0.0f, fminf(spread, 8.0f)) : 0.0f;
+    built.silhouette.intensity = isfinite(intensity) ? fmaxf(0.0f, intensity) : 0.0f;
+    built.silhouette.opacity = 1.0f;
+
+    return built;
+}
+
+R3D_BuiltRenderMode R3D_RenderModeBuildDropShadow(Color color, Vector2 offset, float blurRadius, float spread, float opacity)
+{
+    R3D_BuiltRenderMode built = {0};
+
+    built.kind = R3D_BUILT_MODE_DROP_SHADOW;
+    built.silhouette.color = color;
+    built.silhouette.offset = (Vector2){
+        isfinite(offset.x) ? offset.x : 0.0f,
+        isfinite(offset.y) ? offset.y : 0.0f
+    };
+    built.silhouette.radius = isfinite(blurRadius) ? fmaxf(0.0f, fminf(blurRadius, 24.0f)) : 0.0f;
+    built.silhouette.spread = isfinite(spread) ? fmaxf(0.0f, fminf(spread, 8.0f)) : 0.0f;
+    built.silhouette.intensity = 1.0f;
+    built.silhouette.opacity = isfinite(opacity) ? r3d_mode_clamp01(opacity) : 0.0f;
+
+    return built;
+}
+
 static R3D_BuiltRenderMode r3d_mode_build_colored_forward(Color color, float opacity, R3D_CompareMode depthCompare)
 {
     R3D_BuiltRenderMode built = {0};
@@ -836,6 +877,11 @@ bool R3D_RenderModeSetColor(R3D_BuiltRenderMode* built, Color color)
             return true;
         }
 
+        case R3D_BUILT_MODE_OUTER_GLOW:
+        case R3D_BUILT_MODE_DROP_SHADOW:
+            built->silhouette.color = color;
+            return true;
+
         default:
             return false;
     }
@@ -862,54 +908,58 @@ bool R3D_RenderModeSetOpacity(R3D_BuiltRenderMode* built, float opacity)
 
     switch (built->kind)
     {
-    case R3D_BUILT_MODE_XRAY:
-    case R3D_BUILT_MODE_OCCLUDED_ONLY:
-        built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
-        return true;
+        case R3D_BUILT_MODE_XRAY:
+        case R3D_BUILT_MODE_OCCLUDED_ONLY:
+            built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
+            return true;
 
-    case R3D_BUILT_MODE_SILHOUETTE:
-    {
-        built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
-
-        built->mode.transparencyMode =
-            built->mode.albedoColor.a == 255
-                ? R3D_TRANSPARENCY_OPAQUE
-                : R3D_TRANSPARENCY_BLEND;
-
-        return true;
-    }
-
-    case R3D_BUILT_MODE_ALPHA_BLEND:
-    case R3D_BUILT_MODE_OVERLAY:
-    {
-        if (!built->effect)
+        case R3D_BUILT_MODE_SILHOUETTE:
         {
-            static const char source[] =
-                "uniform float opacity = 1.0;\n"
-                "void fragment() {\n"
-                "    ALPHA *= opacity;\n"
-                "}\n";
+            built->mode.albedoColor.a = r3d_mode_opacity_byte(opacity);
 
-            built->effect = R3D_LoadSurfaceEffectFromMemory(source);
+            built->mode.transparencyMode =
+                built->mode.albedoColor.a == 255
+                    ? R3D_TRANSPARENCY_OPAQUE
+                    : R3D_TRANSPARENCY_BLEND;
 
-            if (!built->effect) return false;
+            return true;
         }
 
-        opacity = r3d_mode_clamp01(opacity);
-        R3D_SetSurfaceEffectUniform(built->effect, "opacity", &opacity);
+        case R3D_BUILT_MODE_ALPHA_BLEND:
+        case R3D_BUILT_MODE_OVERLAY:
+        {
+            if (!built->effect)
+            {
+                static const char source[] =
+                    "uniform float opacity = 1.0;\n"
+                    "void fragment() {\n"
+                    "    ALPHA *= opacity;\n"
+                    "}\n";
 
-        return true;
-    }
+                built->effect = R3D_LoadSurfaceEffectFromMemory(source);
 
-    case R3D_BUILT_MODE_FRESNEL_TRANSPARENCY:
-    {
-        if (!built->effect) return false;
+                if (!built->effect) return false;
+            }
 
-        opacity = r3d_mode_clamp01(opacity);
-        R3D_SetSurfaceEffectUniform(built->effect, "fresnelOpacity", &opacity);
+            opacity = r3d_mode_clamp01(opacity);
+            R3D_SetSurfaceEffectUniform(built->effect, "opacity", &opacity);
 
-        return true;
-    }
+            return true;
+        }
+
+        case R3D_BUILT_MODE_FRESNEL_TRANSPARENCY:
+        {
+            if (!built->effect) return false;
+
+            opacity = r3d_mode_clamp01(opacity);
+            R3D_SetSurfaceEffectUniform(built->effect, "fresnelOpacity", &opacity);
+
+            return true;
+        }
+        case R3D_BUILT_MODE_OUTER_GLOW:
+        case R3D_BUILT_MODE_DROP_SHADOW:
+            built->silhouette.opacity = r3d_mode_clamp01(opacity);
+            return true;
 
         default:
             return false;

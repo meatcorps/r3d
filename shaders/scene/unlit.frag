@@ -40,6 +40,7 @@ layout(location = 0) out vec4 FragColor;
 uniform sampler2D uAlbedoMap;
 uniform float uAlphaCutoff;
 uniform float uCutoffSign;
+uniform bool uSilhouetteMask;
 
 // ================================
 // User Override
@@ -51,10 +52,24 @@ uniform float uCutoffSign;
 // Main Function
 // ================================
 
+vec3 R3D_PackSilhouetteDepth(float value)
+{
+    vec3 p = fract(min(value, 0.99999994) * vec3(1.0, 255.0, 65025.0));
+    p.xy -= p.yz / 255.0;
+    return p;
+}
+
 void main()
 {
     SceneFragment(vTexCoord, vTBN, uAlphaCutoff, uCutoffSign);
 
-    FragColor = vec4(ALBEDO, ALPHA);
-    FragColor = FogColorMix(FragColor, vLinearDepth);
+    if (uSilhouetteMask)
+    {
+        FragColor = vec4(R3D_PackSilhouetteDepth(gl_FragCoord.z), ALPHA);
+    }
+    else
+    {
+        FragColor = vec4(ALBEDO, ALPHA);
+        FragColor = FogColorMix(FragColor, vLinearDepth);
+    }
 }

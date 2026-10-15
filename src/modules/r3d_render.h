@@ -198,6 +198,31 @@ typedef struct {
 } r3d_render_indices_t;
 
 /*
+ * An active built-mode stack entry.
+ */
+typedef struct {
+    bool hasEffect;
+    bool hasSilhouette;
+} r3d_render_built_scope_t;
+
+/*
+ * One independently pushed silhouette effect.
+ * Multiple calls can belong to the same scope.
+ */
+typedef struct {
+    R3D_BuiltRenderModeKind kind;
+    R3D_SilhouetteStyle style;
+} r3d_silhouette_scope_t;
+
+/*
+ * Frame-local membership of a draw call in a silhouette scope.
+ */
+typedef struct {
+    int scopeIndex;
+    int callIndex;
+} r3d_silhouette_call_t;
+
+/*
  * Draw group containing shared state for multiple draw calls.
  * All draw calls pushed after a group inherit its transform, skeleton, and instancing data.
  */
@@ -382,11 +407,16 @@ extern struct r3d_mod_render {
     r3d_list_t* sortCache;                              //< Draw call sorting data cache array (list<r3d_render_sort_t>)
     r3d_list_t* calls;                                  //< Array of draw calls (list<r3d_render_call_t>)
     r3d_list_t* modeStack;                              //< Cumulative temporary render modes
-    r3d_list_t* builtModeStack;                         //< Whether each built scope pushed an effect
+    r3d_list_t* builtModeStack;                         //< Per-built-scope restoration state
+    r3d_list_t* silhouetteScopes;                       //< All silhouette scopes submitted this frame
+    r3d_list_t* silhouetteStack;                        //< Currently active silhouette scope indices
+    r3d_list_t* silhouetteCalls;                        //< Draw calls belonging to silhouette scopes
     r3d_list_t* groupIndices;                           //< Array of group indices for each draw call (list<int>, automatically managed)
 
     GLuint outlineHorizontalProgram;
     GLuint outlineCompositeProgram;
+    GLuint silhouetteHorizontalProgram;
+    GLuint silhouetteCompositeProgram;
 
     bool groupCulled;                                   //< Indicates if groups already culled (controls visibility reset)
 
