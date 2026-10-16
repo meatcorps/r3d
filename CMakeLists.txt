@@ -191,6 +191,12 @@ if(R3D_SUPPORT_MANIFOLD)
 
         add_subdirectory("${R3D_MANIFOLD_SUBMODULE_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/manifold")
 
+        # Treat Manifold's public headers as system headers during local builds.
+        # Manifold already defines its own installation include directories.
+        target_include_directories(manifoldc SYSTEM INTERFACE
+                "$<BUILD_INTERFACE:${R3D_MANIFOLD_SUBMODULE_PATH}/bindings/c/include>"
+        )
+
         set_target_properties(manifold manifoldc PROPERTIES
                 RUNTIME_OUTPUT_DIRECTORY "${R3D_RUNTIME_OUTPUT_DIRECTORY}"
                 LIBRARY_OUTPUT_DIRECTORY "${R3D_LIBRARY_OUTPUT_DIRECTORY}"

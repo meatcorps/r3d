@@ -28,7 +28,7 @@ static R3D_Mesh create_cut_mesh(const R3D_MeshData* original)
     if (cut && manifold_status(cut) == MANIFOLD_NO_ERROR && !manifold_is_empty(cut))
     {
         // Recalculate the normal channel, preserving other vertex properties.
-        ManifoldMeshGL* outputGL = manifold_get_meshgl_w_normals(manifold_alloc_meshgl(), cut, 3);
+        ManifoldMeshGL* outputGL = manifold_get_meshgl_w_normals(manifold_alloc_meshgl(), cut, 0);
 
         if (outputGL)
         {
