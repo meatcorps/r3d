@@ -81,6 +81,22 @@ R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View v
         return result;
     }
 
+    // Validate resolved point widths before allocating projected data.
+    for (int i = 0; i < path->count; i++)
+    {
+        float width = path->points[i].width;
+
+        if (width == 0.0f)
+        {
+            width = path->style.width;
+        }
+
+        if (!isfinite(width) || width <= 0.0f)
+        {
+            return result;
+        }
+    }
+
     R3D_LinePath thinPath = *path;
     thinPath.style.widthMode = R3D_LINE_WIDTH_SCREEN;
 
@@ -111,6 +127,8 @@ R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View v
     }
 
     result.closed = path->closed;
+    result.caps = path->style.caps;
+    result.sourceSegmentCount = path->closed ? path->count : path->count - 1;
 
     Vector3 cameraPosition = view.camera.position;
     Vector3 forward = R3D_GetCameraForward(view.camera);
@@ -125,6 +143,14 @@ R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View v
     {
         const R3D_LineArc* arc = &path->points[segment].arcToNext;
         int steps = projected_line_steps(arc);
+
+        int next = (segment + 1) % path->count;
+
+        float fromWidth = path->points[segment].width;
+        float toWidth = path->points[next].width;
+
+        if (fromWidth == 0.0f) fromWidth = path->style.width;
+        if (toWidth == 0.0f) toWidth = path->style.width;
 
         for (int step = 0; step < steps; step++)
         {
@@ -191,6 +217,9 @@ R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View v
             output->start.segmentT = ((float)step + tStart) / (float)steps;
             output->end.segmentT = ((float)step + tEnd) / (float)steps;
 
+            output->start.width = Lerp(fromWidth, toWidth, output->start.segmentT);
+            output->end.width = Lerp(fromWidth, toWidth, output->end.segmentT);
+
             output->sourceSegment = segment;
             output->sourceArc = *arc;
         }
@@ -214,15 +243,11 @@ void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path)
     free(path.segments);
 }
 
-void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width)
-{
-    R3D_Draw2DProjectedLinePathEx(path, width, R3D_LINE_CAP_BOTH);
-}
 
-void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float width, R3D_LineCapFlags caps)
+void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float widthScale)
 {
     if (!path || !path->segments || path->count <= 0 ||
-        !isfinite(width) || width <= 0.0f)
+        !isfinite(widthScale) || widthScale <= 0.0f)
     {
         return;
     }
@@ -235,7 +260,9 @@ void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float widt
         Vector2 end = segment->end.position;
 
         if (!isfinite(start.x) || !isfinite(start.y) ||
-            !isfinite(end.x) || !isfinite(end.y))
+            !isfinite(end.x) || !isfinite(end.y) ||
+            !isfinite(segment->start.width) ||
+            !isfinite(segment->end.width))
         {
             continue;
         }
@@ -247,51 +274,85 @@ void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float widt
             continue;
         }
 
-        // Raylib's DrawLineEx supports only one color per call.
-        // Subdivide long segments to preserve interpolated colors.
+        // Short pieces approximate both the color gradient
+        // and the smoothly changing width using DrawLineEx().
         int steps = (int)fminf(
-            128.0f,
-            fmaxf(1.0f, ceilf(length / 6.0f))
+            256.0f,
+            fmaxf(1.0f, ceilf(length / 4.0f))
         );
 
         for (int j = 0; j < steps; j++)
         {
             float t0 = (float)j / (float)steps;
             float t1 = (float)(j + 1) / (float)steps;
+            float middle = (t0 + t1) * 0.5f;
 
             Vector2 a = Vector2Lerp(start, end, t0);
             Vector2 b = Vector2Lerp(start, end, t1);
 
+            float width = Lerp(
+                segment->start.width,
+                segment->end.width,
+                middle
+            ) * widthScale;
+
             Color color = ColorLerp(
                 segment->start.color,
                 segment->end.color,
-                (t0 + t1) * 0.5f
+                middle
             );
 
-            DrawLineEx(a, b, width, color);
+            if (width > 0.0f)
+            {
+                DrawLineEx(a, b, width, color);
+            }
         }
 
-        // Internal joins always stay rounded.
-        // The first endpoint is optional for open paths.
-        if (path->closed || i > 0 || (caps & R3D_LINE_CAP_START))
+        // Only fill a join if this section connects to the
+        // preceding visible section. Don't fill clipping gaps.
+        int previous = i > 0 ? i - 1 : path->count - 1;
+
+        bool connected = (i > 0 || path->closed) &&
+            Vector2DistanceSqr(
+                path->segments[previous].end.position,
+                start
+            ) < 0.25f;
+
+        bool originalStart = !path->closed &&
+            segment->sourceSegment == 0 &&
+            segment->start.segmentT <= 0.00001f;
+
+        bool drawStartCap = originalStart &&
+            (path->caps & R3D_LINE_CAP_START);
+
+        if (connected || drawStartCap)
         {
-            DrawCircleV(start, width * 0.5f, segment->start.color);
+            DrawCircleV(
+                start,
+                segment->start.width * widthScale * 0.5f,
+                segment->start.color
+            );
         }
     }
 
-    // Optionally round the final endpoint of an open path.
-    if (!path->closed && (caps & R3D_LINE_CAP_END))
+    // The last cap is only drawn if the actual final source
+    // endpoint survived near/far clipping.
+    if (!path->closed && (path->caps & R3D_LINE_CAP_END))
     {
         const R3D_ProjectedLineSegment* last =
             &path->segments[path->count - 1];
 
-        Vector2 end = last->end.position;
+        bool originalEnd =
+            last->sourceSegment == path->sourceSegmentCount - 1 &&
+            last->end.segmentT >= 0.99999f;
 
-        if (isfinite(end.x) && isfinite(end.y))
+        if (originalEnd &&
+            isfinite(last->end.position.x) &&
+            isfinite(last->end.position.y))
         {
             DrawCircleV(
-                end,
-                width * 0.5f,
+                last->end.position,
+                last->end.width * widthScale * 0.5f,
                 last->end.color
             );
         }

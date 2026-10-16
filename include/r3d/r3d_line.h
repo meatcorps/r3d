@@ -87,7 +87,7 @@ typedef struct R3D_LinePoint {
  * Changes to the path require an explicit mesh update.
  */
 typedef struct R3D_LinePath {
-    const R3D_LinePoint* points;
+    const R3D_LinePoint *points;
     int count;
     bool closed;
     R3D_LineStyle style;
@@ -97,10 +97,11 @@ typedef struct R3D_LinePath {
  * One projected point, including its original path metadata.
  */
 typedef struct R3D_ProjectedLinePoint {
-    Vector2 position;       ///< Target pixel coordinates, top-left origin.
-    Color color;            ///< Interpolated RGBA color.
-    float depth;            ///< Projected depth in the [0, 1] range.
-    float segmentT;         ///< Position within the original segment [0, 1].
+    Vector2 position; ///< Target pixel coordinates, top-left origin.
+    Color color; ///< Interpolated RGBA color.
+    float depth; ///< Projected depth in the [0, 1] range.
+    float segmentT; ///< Position within the original segment [0, 1].
+    float width;            ///< Interpolated width in target pixels.
 } R3D_ProjectedLinePoint;
 
 /**
@@ -125,110 +126,104 @@ typedef struct R3D_ProjectedLinePath {
     R3D_ProjectedLineSegment* segments;
     int count;
     bool closed;
+    R3D_LineCapFlags caps;
+    int sourceSegmentCount;
 } R3D_ProjectedLinePath;
 
 #ifdef __cplusplus
 extern "C" {
+
 #endif
 
-    /**
-     * Generates CPU-side line geometry using path.style.
-     *
-     * WORLD mode produces a triangle ribbon.
-     * SCREEN mode produces a native thin line strip/loop.
-     *
-     * The caller owns the returned mesh data.
-     */
-    R3DAPI R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path);
+/**
+ * Generates CPU-side line geometry using path.style.
+ *
+ * WORLD mode produces a triangle ribbon.
+ * SCREEN mode produces a native thin line strip/loop.
+ *
+ * The caller owns the returned mesh data.
+ */
+R3DAPI R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath *path);
 
-    /**
-     * Generates a mesh using path.style.
-     *
-     * WORLD mode bakes connection widths into the geometry.
-     * It does not support draw-time width scaling.
-     */
-    R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path);
+/**
+ * Generates a mesh using path.style.
+ *
+ * WORLD mode bakes connection widths into the geometry.
+ * It does not support draw-time width scaling.
+ */
+R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath *path);
 
-    /**
-     * Regenerates geometry and uploads it into an existing mesh.
-     *
-     * Supports changed points, colors, widths, arcs and point counts.
-     * Uses R3D_UpdateMesh() to reuse existing GPU storage where possible.
-     *
-     * The mesh must already have been created.
-     */
-    R3DAPI bool R3D_UpdateLineMesh(R3D_Mesh* mesh, const R3D_LinePath* path);
+/**
+ * Regenerates geometry and uploads it into an existing mesh.
+ *
+ * Supports changed points, colors, widths, arcs and point counts.
+ * Uses R3D_UpdateMesh() to reuse existing GPU storage where possible.
+ *
+ * The mesh must already have been created.
+ */
+R3DAPI bool R3D_UpdateLineMesh(R3D_Mesh *mesh, const R3D_LinePath *path);
 
-    /**
-     * Projects a 3D line path into 2D pixel coordinates.
-     *
-     * Arcs are tessellated before projection.
-     * Segments crossing the near/far planes are clipped.
-     * The result preserves source segment and arc metadata.
-     *
-     * Does not require an active R3D drawing session.
-     */
-    R3DAPI R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View view);
+/**
+ * Projects a 3D line path into 2D pixel coordinates.
+ *
+ * Arcs are tessellated before projection.
+ * Segments crossing the near/far planes are clipped.
+ * The result preserves source segment and arc metadata.
+ *
+ * Does not require an active R3D drawing session.
+ */
+R3DAPI R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath *path, R3D_View view);
 
-    /**
-     * Releases the projected CPU-side segments.
-     */
-    R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
+/**
+ * Releases the projected CPU-side segments.
+ */
+R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
 
-    /**
-     * Draws an already projected 2D line path using Raylib drawing functions.
-     *
-     * Uses DrawLineEx() for thick segments and DrawCircleV()
-     * for rounded joins and endpoints.
-     *
-     * Vertex colors are interpolated along each segment.
-     * Width is specified in target pixels.
-     *
-     * Call during Raylib 2D drawing, normally after R3D_End().
-     *
-     * This is an overlay renderer and does not use the 3D depth buffer.
-     * The input path remains owned by the caller.
-     */
-    R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width);
+/**
+ * Draws a projected path using ordinary Raylib 2D drawing functions.
+ *
+ * Uses the interpolated point widths and cap configuration stored
+ * during R3D_ProjectLinePath2D().
+ *
+ * widthScale is a multiplier: 1.0f uses the configured pixel widths.
+ *
+ * Draw after R3D_End(). This is an overlay without 3D depth testing.
+ */
+R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float widthScale);
 
-    /**
-     * Draws projected 2D lines with configurable rounded endpoints.
-     *
-     * Internal joins remain rounded.
-     * Cap flags are ignored for closed paths.
-     */
-    R3DAPI void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float width, R3D_LineCapFlags caps);
+/**
+ * Generates a persistent GPU-expandable screen-space line mesh.
+ *
+ * The resulting triangles require R3D_DrawScreenLineMesh().
+ */
+R3DAPI R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath *path);
 
-    /**
-     * Generates a persistent GPU-expandable screen-space line mesh.
-     *
-     * The resulting triangles require R3D_DrawScreenLineMesh().
-     */
-    R3DAPI R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path);
+/**
+ * Rebuilds an existing screen-space line mesh from the path.
+ * Reuses GPU storage through R3D_UpdateMesh() where possible.
+ * The new caps, point widths, colors and geometry are baked in.
+ */
+R3DAPI bool R3D_UpdateScreenLineMesh(R3D_Mesh *mesh, const R3D_LinePath *path);
 
-    /**
-     * Generates a screen-space line mesh with configurable rounded endpoints.
-     *
-     * Endpoint caps are baked into the generated mesh.
-     * Internal joins remain rounded regardless of the cap flags.
-     * Cap flags are ignored for closed paths.
-     */
-    R3DAPI R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags caps);
+/**
+ * Loads the reusable screen-space line vertex effect.
+ * Create once and share across screen-line meshes.
+ */
+R3DAPI R3D_SurfaceEffect *R3D_LoadScreenLineEffect(void);
 
-    /**
-     * Loads the reusable screen-space line vertex effect.
-     * Create once and share across screen-line meshes.
-     */
-    R3DAPI R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void);
-
-    /**
-     * Draws a screen-space line inside an R3D session.
-     *
-     * Width is measured in internal render-target pixels.
-     * The transform is applied to the original 3D path.
-     * Material is rendered unlit, alpha-blended and double-sided.
-     */
-    R3DAPI void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect* effect, R3D_LineStyle style, Matrix transform);
+/**
+* Draws a GPU-expanded screen-space line inside an R3D session.
+*
+* Point widths are stored in the mesh in internal render-target pixels.
+* widthScale multiplies those widths without rebuilding the mesh.
+* Use 1.0f for the configured widths.
+*
+* Unlike WORLD ribbons, SCREEN lines support draw-time width scaling.
+* The transform changes the path's world-space placement.
+*
+* The material is rendered unlit and participates in depth testing.
+*/
+R3DAPI void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect *effect, float widthScale, Matrix transform);
 
 #ifdef __cplusplus
 }

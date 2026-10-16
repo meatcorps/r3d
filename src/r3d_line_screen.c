@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 // ========================================
 // SCREEN-LINE VERTEX EFFECT
@@ -15,7 +16,7 @@
 
 static const char* R3D_SCREEN_LINE_EFFECT =
     "uniform vec2 lineViewport;\n"
-    "uniform float lineWidth = 4.0;\n"
+    "uniform float lineScale = 1.0;\n"
     "uniform mat4 lineInverseMvp;\n"
     "\n"
     "void vertex() {\n"
@@ -41,7 +42,10 @@ static const char* R3D_SCREEN_LINE_EFFECT =
     "    }\n"
     "\n"
     "    vec2 side = vec2(-direction.y, direction.x);\n"
-    "    float halfWidth = max(lineWidth, 0.0) * 0.5;\n"
+    "    // Width is stored in boneWeights.zw as 16-bit fixed-point data.\n"
+    "    float encodedWidth = floor(aBoneWeights.z * 255.0 + 0.5)\n"
+    "        + 256.0 * floor(aBoneWeights.w * 255.0 + 0.5);\n"
+    "    float halfWidth = encodedWidth * (1.0 / 32.0) * max(lineScale, 0.0);\n"
     "    vec2 pixelOffset;\n"
     "\n"
     "    if (aBoneIndices.y == 1) {\n"
@@ -80,7 +84,7 @@ static unsigned char screen_line_encode(float value)
     return (unsigned char)((value + 1.0f) * 127.5f + 0.5f);
 }
 
-static R3D_Vertex screen_line_vertex(Vector3 position, Color color, Vector3 before, Vector3 after, float distance, float side, int join, bool cap, bool center, float along, float across)
+static R3D_Vertex screen_line_vertex(Vector3 position, Color color, Vector3 before, Vector3 after, float distance, float side, int join, bool cap, bool center, float along, float across, float width)
 {
     R3D_Vertex vertex = R3D_MakeVertex(
         position,
@@ -97,6 +101,15 @@ static R3D_Vertex screen_line_vertex(Vector3 position, Color color, Vector3 befo
     vertex.boneWeights[0] = screen_line_encode(along);
     vertex.boneWeights[1] = screen_line_encode(across);
 
+    // Screen-line meshes are not skinned.
+    // Store width as a 16-bit fixed-point value using two free bytes.
+    uint16_t packedWidth = (uint16_t)roundf(
+        Clamp(width * 16.0f, 1.0f, 65535.0f)
+    );
+
+    vertex.boneWeights[2] = (uint8_t)(packedWidth & 0xFF);
+    vertex.boneWeights[3] = (uint8_t)(packedWidth >> 8);
+
     return vertex;
 }
 
@@ -105,20 +118,20 @@ static Vector3 screen_line_direction(Vector3 from, Vector3 to)
     return Vector3Normalize(Vector3Subtract(to, from));
 }
 
-static void screen_line_add_section(R3D_MeshData* data, Vector3 position, Color color, Vector3 before, Vector3 after, float distance, int join)
+static void screen_line_add_section(R3D_MeshData* data, Vector3 position, Color color, Vector3 before, Vector3 after, float distance, int join, float width)
 {
     data->vertices[data->vertexCount++] = screen_line_vertex(
         position, color, before, after, distance, 0.0f,
-        join, false, false, 0.0f, 0.0f
+        join, false, false, 0.0f, 0.0f, width
     );
 
     data->vertices[data->vertexCount++] = screen_line_vertex(
         position, color, before, after, distance, 1.0f,
-        join, false, false, 0.0f, 0.0f
+        join, false, false, 0.0f, 0.0f, width
     );
 }
 
-static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color color, Vector3 direction, float distance, bool start)
+static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color color, Vector3 direction, float distance, bool start, float width)
 {
     for (int i = 0; i < R3D_SCREEN_LINE_CAP_STEPS; i++)
     {
@@ -135,17 +148,17 @@ static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color colo
 
         data->vertices[data->vertexCount++] = screen_line_vertex(
             position, color, direction, direction,
-            distance, 0.0f, 0, true, true, 0.0f, 0.0f
+            distance, 0.0f, 0, true, true, 0.0f, 0.0f, width
         );
 
         data->vertices[data->vertexCount++] = screen_line_vertex(
             position, color, direction, direction,
-            distance, 0.0f, 0, true, false, alongA, acrossA
+            distance, 0.0f, 0, true, false, alongA, acrossA, width
         );
 
         data->vertices[data->vertexCount++] = screen_line_vertex(
             position, color, direction, direction,
-            distance, 0.0f, 0, true, false, alongB, acrossB
+            distance, 0.0f, 0, true, false, alongB, acrossB, width
         );
 
         data->indices[data->indexCount++] = index;
@@ -159,17 +172,49 @@ static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color colo
 // ========================================
 
 
-R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags caps)
+static int screen_line_steps(const R3D_LineArc* arc)
 {
-    R3D_Mesh mesh = {0};
+    float sweep = fabsf(arc->sweepAngle);
 
-    if (!path || !path->points || path->count < 2 ||
-        (path->closed && path->count < 3))
+    if (!isfinite(sweep) || sweep < 0.0001f ||
+        sweep >= 2.0f * PI - 0.0001f)
     {
-        return mesh;
+        return 1;
     }
 
-    // Reuse the existing arc tessellation and color interpolation.
+    return arc->subdivisions > 0 ? arc->subdivisions : 16;
+}
+
+static float screen_line_point_width(const R3D_LinePath* path, int index)
+{
+    float width = path->points[index].width;
+    return width == 0.0f ? path->style.width : width;
+}
+
+static R3D_MeshData screen_line_build_data(const R3D_LinePath* path)
+{
+    R3D_MeshData result = {0};
+
+    if (!path || !path->points || path->count < 2 ||
+        (path->closed && path->count < 3) ||
+        path->style.widthMode != R3D_LINE_WIDTH_SCREEN)
+    {
+        return result;
+    }
+
+    // Our two-byte width representation supports up to 4095.9375 px.
+    // Validate all source widths before generating any geometry.
+    for (int i = 0; i < path->count; i++)
+    {
+        float width = screen_line_point_width(path, i);
+
+        if (!isfinite(width) || width <= 0.0f || width > 4095.9375f)
+        {
+            return result;
+        }
+    }
+
+    // Reuse the existing path and arc tessellation.
     R3D_LinePath thinPath = *path;
     thinPath.style.widthMode = R3D_LINE_WIDTH_SCREEN;
 
@@ -178,13 +223,51 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
     if (!R3D_IsMeshDataValid(samples))
     {
         R3D_UnloadMeshData(samples);
-        return mesh;
+        return result;
     }
 
-    // Remove duplicate consecutive points.
+    int originalCount = samples.vertexCount;
+    float* widths = malloc((size_t)originalCount * sizeof(*widths));
+
+    if (!widths)
+    {
+        R3D_UnloadMeshData(samples);
+        return result;
+    }
+
+    // Assign a width to every tessellated vertex.
+    // This matches the subdivision rules of R3D_GenMeshDataLinePath().
+    int sourceSegments = path->closed ? path->count : path->count - 1;
+    int sampleIndex = 0;
+
+    for (int segment = 0; segment < sourceSegments; segment++)
+    {
+        int next = (segment + 1) % path->count;
+
+        float fromWidth = screen_line_point_width(path, segment);
+        float toWidth = screen_line_point_width(path, next);
+
+        int steps = screen_line_steps(&path->points[segment].arcToNext);
+
+        for (int step = 0; step < steps; step++)
+        {
+            int a = (sampleIndex + step) % originalCount;
+            int b = (sampleIndex + step + 1) % originalCount;
+
+            float t0 = (float)step / (float)steps;
+            float t1 = (float)(step + 1) / (float)steps;
+
+            widths[a] = Lerp(fromWidth, toWidth, t0);
+            widths[b] = Lerp(fromWidth, toWidth, t1);
+        }
+
+        sampleIndex += steps;
+    }
+
+    // Remove consecutive coincident positions, preserving widths.
     int count = 0;
 
-    for (int i = 0; i < samples.vertexCount; i++)
+    for (int i = 0; i < originalCount; i++)
     {
         R3D_Vertex vertex = samples.vertices[i];
 
@@ -192,8 +275,9 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
             !isfinite(vertex.position.y) ||
             !isfinite(vertex.position.z))
         {
+            free(widths);
             R3D_UnloadMeshData(samples);
-            return mesh;
+            return result;
         }
 
         if (count > 0 &&
@@ -202,10 +286,13 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
                 samples.vertices[count - 1].position
             ) < 0.000000000001f)
         {
+            widths[count - 1] = widths[i];
             continue;
         }
 
-        samples.vertices[count++] = vertex;
+        samples.vertices[count] = vertex;
+        widths[count] = widths[i];
+        count++;
     }
 
     if (path->closed && count > 1 &&
@@ -220,18 +307,18 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
     if (count < (path->closed ? 3 : 2) ||
         count > INT_MAX / (6 + 6 * R3D_SCREEN_LINE_CAP_STEPS))
     {
+        free(widths);
         R3D_UnloadMeshData(samples);
-        return mesh;
+        return result;
     }
 
     int segmentCount = path->closed ? count : count - 1;
 
-    // Four vertices and six indices per segment.
     int quadVertices = segmentCount * 4;
     int quadIndices = segmentCount * 6;
 
-    // Two semicircles create one complete round join.
-    // Endpoints use the same geometry for rounded caps.
+    // Maximum capacity: two semicircular fans per point.
+    // Flat endpoints may use fewer vertices than allocated.
     int roundVertices = count * 6 * R3D_SCREEN_LINE_CAP_STEPS;
 
     R3D_MeshData data = R3D_LoadMeshData(
@@ -242,37 +329,37 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
     if (!data.vertices || !data.indices)
     {
         R3D_UnloadMeshData(data);
+        free(widths);
         R3D_UnloadMeshData(samples);
-        return mesh;
+        return result;
     }
 
     float distance = 0.0f;
 
-    // Generate independent segment quads.
+    // Independent segment quads remain unchanged.
+    // Only their per-vertex widths are different.
     for (int i = 0; i < segmentCount; i++)
     {
         int next = (i + 1) % count;
 
         Vector3 from = samples.vertices[i].position;
         Vector3 to = samples.vertices[next].position;
-
         Vector3 direction = screen_line_direction(from, to);
 
         Color fromColor = samples.vertices[i].color;
         Color toColor = samples.vertices[next].color;
 
         float segmentLength = Vector3Distance(from, to);
-
         uint32_t base = (uint32_t)data.vertexCount;
 
         screen_line_add_section(
             &data, from, fromColor,
-            direction, direction, distance, 0
+            direction, direction, distance, 0, widths[i]
         );
 
         screen_line_add_section(
             &data, to, toColor,
-            direction, direction, distance + segmentLength, 0
+            direction, direction, distance + segmentLength, 0, widths[next]
         );
 
         data.indices[data.indexCount++] = base + 0;
@@ -286,16 +373,13 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
         distance += segmentLength;
     }
 
-    // Fill every join with a circular section.
-    // This is independent of the projected turning angle.
+    // Full circular joins preserve the stable screen-space topology.
     for (int i = 0; i < count; i++)
     {
-        // Open paths can independently disable their endpoint caps.
-        // Internal joins always retain their circular geometry.
         if (!path->closed)
         {
-            if (i == 0 && !(caps & R3D_LINE_CAP_START)) continue;
-            if (i == count - 1 && !(caps & R3D_LINE_CAP_END)) continue;
+            if (i == 0 && !(path->style.caps & R3D_LINE_CAP_START)) continue;
+            if (i == count - 1 && !(path->style.caps & R3D_LINE_CAP_END)) continue;
         }
 
         int next = (i + 1) % count;
@@ -309,43 +393,73 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
         if (!path->closed && i == count - 1)
         {
             direction = screen_line_direction(
-                samples.vertices[previous].position,
-                position
+                samples.vertices[previous].position, position
             );
         }
         else
         {
             direction = screen_line_direction(
-                position,
-                samples.vertices[next].position
+                position, samples.vertices[next].position
             );
         }
 
-        // Two semicircles form one complete disk.
-        // At path endpoints this also creates rounded caps.
         screen_line_add_cap(
             &data, position, color, direction,
-            0.0f, true
+            0.0f, true, widths[i]
         );
 
         screen_line_add_cap(
             &data, position, color, direction,
-            0.0f, false
+            0.0f, false, widths[i]
         );
+    }
+
+    free(widths);
+    R3D_UnloadMeshData(samples);
+
+    return data;
+}
+
+R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
+{
+    R3D_Mesh mesh = {0};
+    R3D_MeshData data = screen_line_build_data(path);
+
+    if (!R3D_IsMeshDataValid(data))
+    {
+        R3D_UnloadMeshData(data);
+        return mesh;
     }
 
     mesh = R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, data, NULL);
     mesh.shadowCastMode = R3D_SHADOW_CAST_DISABLED;
 
     R3D_UnloadMeshData(data);
-    R3D_UnloadMeshData(samples);
 
     return mesh;
 }
 
-R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
+bool R3D_UpdateScreenLineMesh(R3D_Mesh* mesh, const R3D_LinePath* path)
 {
-    return R3D_GenMeshScreenLinePathEx(path, R3D_LINE_CAP_BOTH);
+    if (!mesh || !R3D_IsMeshValid(*mesh) ||
+        mesh->primitiveType != R3D_PRIMITIVE_TRIANGLES)
+    {
+        return false;
+    }
+
+    R3D_MeshData data = screen_line_build_data(path);
+
+    if (!R3D_IsMeshDataValid(data))
+    {
+        R3D_UnloadMeshData(data);
+        return false;
+    }
+
+    bool updated = R3D_UpdateMesh(mesh, data, NULL);
+
+    R3D_UnloadMeshData(data);
+
+    return updated;
 }
 
 R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void)
@@ -353,10 +467,10 @@ R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void)
     return R3D_LoadSurfaceEffectFromMemory(R3D_SCREEN_LINE_EFFECT);
 }
 
-void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect* effect, R3D_LineStyle style, Matrix transform)
+void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect* effect, float widthScale, Matrix transform)
 {
     if (!effect || !R3D_IsMeshValid(mesh) ||
-        !isfinite(style.width) || style.width <= 0.0f)
+        !isfinite(widthScale) || widthScale <= 0.0f)
     {
         return;
     }
@@ -384,7 +498,7 @@ void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEff
     Matrix inverseMvp = MatrixInvert(mvp);
 
     R3D_SetSurfaceEffectUniform(effect, "lineViewport", &viewport);
-    R3D_SetSurfaceEffectUniform(effect, "lineWidth", &style.width);
+    R3D_SetSurfaceEffectUniform(effect, "lineScale", &widthScale);
     R3D_SetSurfaceEffectUniform(effect, "lineInverseMvp", MatrixToFloat(inverseMvp));
 
     // Screen ribbons are not physically illuminated surfaces.
