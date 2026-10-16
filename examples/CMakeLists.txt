@@ -77,6 +77,7 @@ add_example(r3d_effect_shadow_validation "examples/effect_shadow_validation.c")
 add_example(r3d_draw_render_modes "examples/draw_render_modes.c")
 add_example(r3d_draw_geometry_deformation "examples/draw_geometry_deformation.c")
 add_example(r3d_effect_showroom "examples/effect_showroom.c")
+add_example(r3d_line_showroom "examples/line_showroom.c")
 
 # Special include cases
 target_include_directories(r3d_matrix_decompose PRIVATE "${R3D_GENERATED_INCLUDE_DIR}")
