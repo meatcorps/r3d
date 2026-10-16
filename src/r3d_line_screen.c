@@ -191,7 +191,7 @@ static float screen_line_point_width(const R3D_LinePath* path, int index)
     return width == 0.0f ? path->style.width : width;
 }
 
-static R3D_MeshData screen_line_build_data(const R3D_LinePath* path)
+R3D_MeshData R3D_GenMeshDataScreenLinePath(const R3D_LinePath* path)
 {
     R3D_MeshData result = {0};
 
@@ -423,7 +423,7 @@ static R3D_MeshData screen_line_build_data(const R3D_LinePath* path)
 R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
 {
     R3D_Mesh mesh = {0};
-    R3D_MeshData data = screen_line_build_data(path);
+    R3D_MeshData data = R3D_GenMeshDataScreenLinePath(path);
 
     if (!R3D_IsMeshDataValid(data))
     {
@@ -447,7 +447,7 @@ bool R3D_UpdateScreenLineMesh(R3D_Mesh* mesh, const R3D_LinePath* path)
         return false;
     }
 
-    R3D_MeshData data = screen_line_build_data(path);
+    R3D_MeshData data = R3D_GenMeshDataScreenLinePath(path);
 
     if (!R3D_IsMeshDataValid(data))
     {

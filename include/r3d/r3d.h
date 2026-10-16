@@ -43,6 +43,8 @@
 #include "r3d_shape_key.h"
 #include "r3d_mesh.h"
 #include "r3d_line.h"
+#include "r3d_point_cloud.h"
+#include "r3d_wireframe.h"
 #include "r3d_model.h"
 #include "r3d_pack.h"
 #include "r3d_probe.h"

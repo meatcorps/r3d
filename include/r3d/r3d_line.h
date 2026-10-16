@@ -222,6 +222,12 @@ R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
 R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath *path, float widthScale);
 
 /**
+ * Generates CPU-side triangles for GPU-expanded screen-space lines.
+ * The caller must release the result using R3D_UnloadMeshData().
+ */
+R3DAPI R3D_MeshData R3D_GenMeshDataScreenLinePath(const R3D_LinePath* path);
+
+/**
  * Generates a persistent GPU-expandable screen-space line mesh.
  *
  * The resulting triangles require R3D_DrawScreenLineMesh().
