@@ -133,6 +133,23 @@ extern "C" {
 #endif
 
 /**
+ * Called when an OpenGL shader fails to compile or link.
+ *
+ * pass: Rendering pass name, e.g. geometry, forward, depth.
+ * stage: vertex, fragment, or link.
+ * message: Complete OpenGL diagnostic message.
+ * vertexSource / fragmentSource: Generated GLSL used for compilation.
+ *
+ * All strings are borrowed and valid only during this callback.
+ * Pass NULL as callback to disable diagnostics.
+ *
+ * Runs synchronously on the thread compiling the shader.
+ */
+typedef void (*R3D_ShaderDiagnosticCallback)(const char* pass, const char* stage, const char* message, const char* vertexSource, const char* fragmentSource, void* userData);
+
+R3DAPI void R3D_SetShaderDiagnosticCallback(R3D_ShaderDiagnosticCallback callback, void* userData);
+
+/**
  * @brief Sets a configuration hint.
  * 
  * Must be called before @ref R3D_Init().

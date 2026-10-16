@@ -73,3 +73,33 @@ foreach(test_name IN LISTS R3D_PROJECTION_TESTS)
     add_test(NAME projection_${test_name} COMMAND r3d_test_projection ${test_name})
     set_tests_properties(projection_${test_name} PROPERTIES LABELS "projection;headless")
 endforeach()
+
+# ========================================
+# Shader Diagnostics Tests (OpenGL)
+# ========================================
+
+add_executable(r3d_test_shader_diagnostics shader_diagnostics.c)
+target_link_libraries(r3d_test_shader_diagnostics PRIVATE r3d raylib)
+target_include_directories(r3d_test_shader_diagnostics PRIVATE
+        "${R3D_ROOT_PATH}/include"
+)
+
+option(R3D_TESTS_GPU "Register tests requiring an OpenGL context" OFF)
+
+if(R3D_TESTS_GPU)
+    set(R3D_SHADER_DIAGNOSTIC_TESTS
+            valid
+            invalid_vertex
+            invalid_fragment
+    )
+
+    foreach(test_name IN LISTS R3D_SHADER_DIAGNOSTIC_TESTS)
+        add_test(
+                NAME shader_${test_name}
+                COMMAND r3d_test_shader_diagnostics ${test_name}
+        )
+        set_tests_properties(shader_${test_name} PROPERTIES
+                LABELS "shader;gpu"
+        )
+    endforeach()
+endif()

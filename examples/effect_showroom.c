@@ -572,6 +572,7 @@ static void destroy_showroom(Showroom* s)
 
 int main(void)
 {
+
     InitWindow(SCREEN_W, SCREEN_H, "[r3d] Meatcorps - Effects Atlas");
     SetTargetFPS(60);
 
