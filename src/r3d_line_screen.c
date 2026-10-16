@@ -159,7 +159,7 @@ static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color colo
 // ========================================
 
 
-R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
+R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags caps)
 {
     R3D_Mesh mesh = {0};
 
@@ -288,6 +288,14 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
     // This is independent of the projected turning angle.
     for (int i = 0; i < count; i++)
     {
+        // Open paths can independently disable their endpoint caps.
+        // Internal joins always retain their circular geometry.
+        if (!path->closed)
+        {
+            if (i == 0 && !(caps & R3D_LINE_CAP_START)) continue;
+            if (i == count - 1 && !(caps & R3D_LINE_CAP_END)) continue;
+        }
+
         int next = (i + 1) % count;
         int previous = (i + count - 1) % count;
 
@@ -331,6 +339,11 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
     R3D_UnloadMeshData(samples);
 
     return mesh;
+}
+
+R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
+{
+    return R3D_GenMeshScreenLinePathEx(path, R3D_LINE_CAP_BOTH);
 }
 
 R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void)

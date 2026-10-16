@@ -24,6 +24,18 @@ typedef enum R3D_LineWidthMode {
 } R3D_LineWidthMode;
 
 /**
+ * Rounded endpoint configuration.
+ *
+ * Only affects open paths. Closed paths have no endpoints.
+ */
+typedef enum R3D_LineCapFlags {
+    R3D_LINE_CAP_NONE = 0,
+    R3D_LINE_CAP_START = 1 << 0,
+    R3D_LINE_CAP_END = 1 << 1,
+    R3D_LINE_CAP_BOTH = R3D_LINE_CAP_START | R3D_LINE_CAP_END
+} R3D_LineCapFlags;
+
+/**
  * Curvature of the segment leading to the next point.
  *
  * sweepAngle is expressed in radians.
@@ -118,6 +130,19 @@ extern "C" {
     R3DAPI R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path, R3D_LineStyle style);
 
     /**
+     * Generates CPU-side line geometry with configurable end caps.
+     *
+     * Rounded caps are supported for WORLD mode.
+     * SCREEN thin-line mode ignores the cap flags.
+     * Closed paths have no endpoint caps.
+     */
+    R3DAPI R3D_MeshData R3D_GenMeshDataLinePathEx(
+        const R3D_LinePath* path,
+        R3D_LineStyle style,
+        R3D_LineCapFlags caps
+    );
+
+    /**
      * Generates an R3D mesh from a colored line path.
      *
      * The returned mesh uses LINE_STRIP or LINE_LOOP primitives.
@@ -125,6 +150,17 @@ extern "C" {
      */
     R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style);
 
+    /**
+     * Generates a line mesh with configurable endpoint caps.
+     *
+     * In WORLD mode, rounded caps are real triangle geometry.
+     * Existing R3D_GenMeshLinePath() keeps flat endpoints.
+     */
+    R3DAPI R3D_Mesh R3D_GenMeshLinePathEx(
+        const R3D_LinePath* path,
+        R3D_LineStyle style,
+        R3D_LineCapFlags caps
+    );
 
     /**
      * Projects a 3D line path into 2D pixel coordinates.
@@ -159,11 +195,28 @@ extern "C" {
     R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width);
 
     /**
+     * Draws projected 2D lines with configurable rounded endpoints.
+     *
+     * Internal joins remain rounded.
+     * Cap flags are ignored for closed paths.
+     */
+    R3DAPI void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float width, R3D_LineCapFlags caps);
+
+    /**
      * Generates a persistent GPU-expandable screen-space line mesh.
      *
      * The resulting triangles require R3D_DrawScreenLineMesh().
      */
     R3DAPI R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path);
+
+    /**
+     * Generates a screen-space line mesh with configurable rounded endpoints.
+     *
+     * Endpoint caps are baked into the generated mesh.
+     * Internal joins remain rounded regardless of the cap flags.
+     * Cap flags are ignored for closed paths.
+     */
+    R3DAPI R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags caps);
 
     /**
      * Loads the reusable screen-space line vertex effect.

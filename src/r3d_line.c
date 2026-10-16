@@ -359,6 +359,131 @@ static int line_ribbon_trim_sharp_joins(R3D_MeshData* samples, bool closed, floa
     return samples->vertexCount;
 }
 
+
+#define R3D_WORLD_LINE_CAP_STEPS 16
+
+/*
+ * Adds a rounded endpoint to an existing world-space ribbon.
+ *
+ * The cap uses the endpoint's actual ribbon cross-section,
+ * so it follows the ribbon plane and matches its thickness.
+ *
+ * Three unique vertices per triangle keep the implementation
+ * simple and compatible with the existing mesh data format.
+ */
+static void line_ribbon_add_round_cap(
+    R3D_MeshData* mesh,
+    const R3D_Vertex* section,
+    bool start)
+{
+    Vector3 right = section[0].position;
+    Vector3 left = section[1].position;
+
+    Vector3 center = Vector3Scale(
+        Vector3Add(right, left), 0.5f
+    );
+
+    Vector3 side = Vector3Subtract(left, right);
+    float radius = Vector3Length(side) * 0.5f;
+
+    if (radius <= 0.000001f)
+    {
+        return;
+    }
+
+    side = Vector3Normalize(side);
+
+    Vector4 packedTangent = R3D_UnpackTangent(section[0].tangent);
+
+    Vector3 forward = {
+        packedTangent.x,
+        packedTangent.y,
+        packedTangent.z
+    };
+
+    if (Vector3LengthSqr(forward) <= 0.00000001f)
+    {
+        return;
+    }
+
+    forward = Vector3Normalize(forward);
+
+    Vector3 normal = Vector3Normalize(
+        Vector3CrossProduct(forward, side)
+    );
+
+    Vector4 tangent = {
+        forward.x,
+        forward.y,
+        forward.z,
+        1.0f
+    };
+
+    Color color = section[0].color;
+    float baseU = R3D_UnpackTexCoord(section[0].texcoord).x;
+
+    for (int i = 0; i < R3D_WORLD_LINE_CAP_STEPS; i++)
+    {
+        float angleA = PI * (float)i / R3D_WORLD_LINE_CAP_STEPS;
+        float angleB = PI * (float)(i + 1) / R3D_WORLD_LINE_CAP_STEPS;
+
+        float directionSign = start ? -1.0f : 1.0f;
+        float sideSign = start ? 1.0f : -1.0f;
+
+        float forwardA = sinf(angleA) * radius * directionSign;
+        float forwardB = sinf(angleB) * radius * directionSign;
+
+        float acrossA = cosf(angleA) * radius * sideSign;
+        float acrossB = cosf(angleB) * radius * sideSign;
+
+        Vector3 positionA = Vector3Add(
+            center,
+            Vector3Add(
+                Vector3Scale(forward, forwardA),
+                Vector3Scale(side, acrossA)
+            )
+        );
+
+        Vector3 positionB = Vector3Add(
+            center,
+            Vector3Add(
+                Vector3Scale(forward, forwardB),
+                Vector3Scale(side, acrossB)
+            )
+        );
+
+        Vector2 centerUV = {baseU, 0.5f};
+
+        Vector2 uvA = {
+            baseU + forwardA,
+            0.5f + acrossA / (2.0f * radius)
+        };
+
+        Vector2 uvB = {
+            baseU + forwardB,
+            0.5f + acrossB / (2.0f * radius)
+        };
+
+        uint32_t base = (uint32_t)mesh->vertexCount;
+
+        mesh->vertices[mesh->vertexCount++] = R3D_MakeVertex(
+            center, centerUV, normal, tangent, color
+        );
+
+        mesh->vertices[mesh->vertexCount++] = R3D_MakeVertex(
+            positionA, uvA, normal, tangent, color
+        );
+
+        mesh->vertices[mesh->vertexCount++] = R3D_MakeVertex(
+            positionB, uvB, normal, tangent, color
+        );
+
+        mesh->indices[mesh->indexCount++] = base;
+        mesh->indices[mesh->indexCount++] = base + 1;
+        mesh->indices[mesh->indexCount++] = base + 2;
+    }
+}
+
 /*
  * Build a ribbon with segment-local UV coordinates.
  *
@@ -368,7 +493,7 @@ static int line_ribbon_trim_sharp_joins(R3D_MeshData* samples, bool closed, floa
  * Geometry remains unchanged; only vertex duplication
  * and UV coordinates are affected.
  */
-static R3D_MeshData line_ribbon_build_uv_quads(const R3D_MeshData* ribbon)
+static R3D_MeshData line_ribbon_build_uv_quads(const R3D_MeshData* ribbon, bool closed, R3D_LineCapFlags caps)
 {
     R3D_MeshData result = {0};
 
@@ -381,10 +506,25 @@ static R3D_MeshData line_ribbon_build_uv_quads(const R3D_MeshData* ribbon)
 
     int quadCount = sectionCount - 1;
 
-    if (quadCount > INT_MAX / 6)
+    int capCount = 0;
+
+    if (!closed)
+    {
+        if (caps & R3D_LINE_CAP_START) capCount++;
+        if (caps & R3D_LINE_CAP_END) capCount++;
+    }
+
+    int capVertices = capCount * R3D_WORLD_LINE_CAP_STEPS * 3;
+
+    if (quadCount > (INT_MAX - capVertices) / 6)
     {
         return result;
     }
+
+    result = R3D_LoadMeshData(
+        quadCount * 4 + capVertices,
+        quadCount * 6 + capVertices
+    );
 
     result = R3D_LoadMeshData(quadCount * 4, quadCount * 6);
 
@@ -480,10 +620,35 @@ static R3D_MeshData line_ribbon_build_uv_quads(const R3D_MeshData* ribbon)
         result.vertexCount += 4;
     }
 
+    // Only open paths have endpoints.
+    // Use the original ribbon sections, before vertex duplication.
+    if (!closed)
+    {
+        if (caps & R3D_LINE_CAP_START)
+        {
+            line_ribbon_add_round_cap(
+                &result,
+                &ribbon->vertices[0],
+                true
+            );
+        }
+
+        if (caps & R3D_LINE_CAP_END)
+        {
+            int lastSection = sectionCount - 1;
+
+            line_ribbon_add_round_cap(
+                &result,
+                &ribbon->vertices[lastSection * 2],
+                false
+            );
+        }
+    }
+
     return result;
 }
 
-static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_LineStyle style)
+static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_LineStyle style, R3D_LineCapFlags caps)
 {
     R3D_MeshData ribbon = {0};
 
@@ -762,7 +927,12 @@ static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_Lin
     ribbon.indexCount = index;
 
     // Generate UVs using the lengths of the actual ribbon edges.
-    R3D_MeshData texturedRibbon = line_ribbon_build_uv_quads(&ribbon);
+    // Build segment-local UV quads and optional endpoint caps.
+    R3D_MeshData texturedRibbon = line_ribbon_build_uv_quads(
+        &ribbon,
+        path->closed,
+        caps
+    );
 
     if (R3D_IsMeshDataValid(texturedRibbon))
     {
@@ -775,11 +945,14 @@ static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_Lin
     return ribbon;
 }
 
-R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path, R3D_LineStyle style)
+R3D_MeshData R3D_GenMeshDataLinePathEx(
+    const R3D_LinePath* path,
+    R3D_LineStyle style,
+    R3D_LineCapFlags caps)
 {
     if (style.widthMode == R3D_LINE_WIDTH_WORLD)
     {
-        return line_generate_world_ribbon(path, style);
+        return line_generate_world_ribbon(path, style, caps);
     }
 
     R3D_MeshData data = {0};
@@ -885,11 +1058,18 @@ R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path, R3D_LineStyle sty
     return data;
 }
 
-R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style)
+R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path, R3D_LineStyle style)
+{
+    return R3D_GenMeshDataLinePathEx(
+        path, style, R3D_LINE_CAP_NONE
+    );
+}
+
+R3D_Mesh R3D_GenMeshLinePathEx(const R3D_LinePath* path, R3D_LineStyle style, R3D_LineCapFlags caps)
 {
     R3D_Mesh mesh = {0};
 
-    R3D_MeshData data = R3D_GenMeshDataLinePath(path, style);
+    R3D_MeshData data = R3D_GenMeshDataLinePathEx(path, style, caps);
 
     if (!R3D_IsMeshDataValid(data)) {
         R3D_UnloadMeshData(data);
@@ -915,4 +1095,11 @@ R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style)
     R3D_UnloadMeshData(data);
 
     return mesh;
+}
+
+R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style)
+{
+    return R3D_GenMeshLinePathEx(
+        path, style, R3D_LINE_CAP_NONE
+    );
 }

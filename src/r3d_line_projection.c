@@ -212,8 +212,12 @@ void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path)
     free(path.segments);
 }
 
-
 void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width)
+{
+    R3D_Draw2DProjectedLinePathEx(path, width, R3D_LINE_CAP_BOTH);
+}
+
+void R3D_Draw2DProjectedLinePathEx(const R3D_ProjectedLinePath* path, float width, R3D_LineCapFlags caps)
 {
     if (!path || !path->segments || path->count <= 0 ||
         !isfinite(width) || width <= 0.0f)
@@ -265,12 +269,16 @@ void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width)
             DrawLineEx(a, b, width, color);
         }
 
-        // Rounded joints.
-        DrawCircleV(start, width * 0.5f, segment->start.color);
+        // Internal joins always stay rounded.
+        // The first endpoint is optional for open paths.
+        if (path->closed || i > 0 || (caps & R3D_LINE_CAP_START))
+        {
+            DrawCircleV(start, width * 0.5f, segment->start.color);
+        }
     }
 
-    // Finish the last endpoint on open paths.
-    if (!path->closed)
+    // Optionally round the final endpoint of an open path.
+    if (!path->closed && (caps & R3D_LINE_CAP_END))
     {
         const R3D_ProjectedLineSegment* last =
             &path->segments[path->count - 1];
