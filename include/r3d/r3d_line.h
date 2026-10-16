@@ -56,14 +56,16 @@ typedef struct R3D_LinePath {
 } R3D_LinePath;
 
 /**
- * Geometric properties of the line.
+ * Geometric properties of a line path.
  *
- * Phase 1 produces native 1-pixel lines.
- * Width and widthMode become functional in later phases.
+ * SCREEN mode keeps native thin lines until Phase 3.
+ * WORLD mode generates a triangle ribbon.
  */
 typedef struct R3D_LineStyle {
-    float width;
-    R3D_LineWidthMode widthMode;
+    float width;                    ///< Width in world units for WORLD mode.
+    R3D_LineWidthMode widthMode;    ///< WORLD or SCREEN.
+    Vector3 normal;                 ///< Reference normal for WORLD ribbons. Zero selects automatic orientation.
+    float miterLimit;               ///< Maximum miter length relative to half-width. Zero defaults to 4.
 } R3D_LineStyle;
 
 #ifdef __cplusplus
