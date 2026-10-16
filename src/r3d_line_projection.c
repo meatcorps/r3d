@@ -211,3 +211,79 @@ void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path)
 {
     free(path.segments);
 }
+
+
+void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width)
+{
+    if (!path || !path->segments || path->count <= 0 ||
+        !isfinite(width) || width <= 0.0f)
+    {
+        return;
+    }
+
+    for (int i = 0; i < path->count; i++)
+    {
+        const R3D_ProjectedLineSegment* segment = &path->segments[i];
+
+        Vector2 start = segment->start.position;
+        Vector2 end = segment->end.position;
+
+        if (!isfinite(start.x) || !isfinite(start.y) ||
+            !isfinite(end.x) || !isfinite(end.y))
+        {
+            continue;
+        }
+
+        float length = Vector2Distance(start, end);
+
+        if (!isfinite(length))
+        {
+            continue;
+        }
+
+        // Raylib's DrawLineEx supports only one color per call.
+        // Subdivide long segments to preserve interpolated colors.
+        int steps = (int)fminf(
+            128.0f,
+            fmaxf(1.0f, ceilf(length / 6.0f))
+        );
+
+        for (int j = 0; j < steps; j++)
+        {
+            float t0 = (float)j / (float)steps;
+            float t1 = (float)(j + 1) / (float)steps;
+
+            Vector2 a = Vector2Lerp(start, end, t0);
+            Vector2 b = Vector2Lerp(start, end, t1);
+
+            Color color = ColorLerp(
+                segment->start.color,
+                segment->end.color,
+                (t0 + t1) * 0.5f
+            );
+
+            DrawLineEx(a, b, width, color);
+        }
+
+        // Rounded joints.
+        DrawCircleV(start, width * 0.5f, segment->start.color);
+    }
+
+    // Finish the last endpoint on open paths.
+    if (!path->closed)
+    {
+        const R3D_ProjectedLineSegment* last =
+            &path->segments[path->count - 1];
+
+        Vector2 end = last->end.position;
+
+        if (isfinite(end.x) && isfinite(end.y))
+        {
+            DrawCircleV(
+                end,
+                width * 0.5f,
+                last->end.color
+            );
+        }
+    }
+}

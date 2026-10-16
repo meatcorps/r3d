@@ -12,93 +12,55 @@
 // SCREEN-LINE VERTEX EFFECT
 // ========================================
 
+
 static const char* R3D_SCREEN_LINE_EFFECT =
     "uniform vec2 lineViewport;\n"
     "uniform float lineWidth = 4.0;\n"
-    "uniform float lineMiterLimit = 4.0;\n"
     "uniform mat4 lineInverseMvp;\n"
-    "\n"
-    "vec2 lineSafeDirection(vec2 value) {\n"
-    "    float lengthValue = length(value);\n"
-    "    return lengthValue > 0.00001 ? value / lengthValue : vec2(1.0, 0.0);\n"
-    "}\n"
     "\n"
     "void vertex() {\n"
     "    vec4 centerClip = MATRIX_VIEW_PROJECTION * MATRIX_MODEL * vec4(POSITION, 1.0);\n"
     "    if (centerClip.w <= 0.00001) return;\n"
     "\n"
-    "    vec3 beforeWorld = POSITION - NORMAL * 0.05;\n"
-    "    vec3 afterWorld = POSITION + TANGENT.xyz * 0.05;\n"
+    "    // Each segment has its own direction, so no projected\n"
+    "    // miter or outside-corner classification is needed.\n"
+    "    vec3 nextPosition = POSITION + TANGENT.xyz * 0.05;\n"
+    "    vec4 nextClip = MATRIX_VIEW_PROJECTION * MATRIX_MODEL * vec4(nextPosition, 1.0);\n"
     "\n"
-    "    vec4 beforeClip = MATRIX_VIEW_PROJECTION * MATRIX_MODEL * vec4(beforeWorld, 1.0);\n"
-    "    vec4 afterClip = MATRIX_VIEW_PROJECTION * MATRIX_MODEL * vec4(afterWorld, 1.0);\n"
+    "    vec2 direction = vec2(1.0, 0.0);\n"
     "\n"
-    "    vec2 centerNdc = centerClip.xy / centerClip.w;\n"
-    "    vec2 beforeNdc = beforeClip.w > 0.00001 ? beforeClip.xy / beforeClip.w : centerNdc;\n"
-    "    vec2 afterNdc = afterClip.w > 0.00001 ? afterClip.xy / afterClip.w : centerNdc;\n"
+    "    if (nextClip.w > 0.00001) {\n"
+    "        vec2 difference = (\n"
+    "            nextClip.xy / nextClip.w - centerClip.xy / centerClip.w\n"
+    "        ) * lineViewport;\n"
     "\n"
-    "            vec2 beforeVector = (centerNdc - beforeNdc) * lineViewport;\n"
-    "    vec2 afterVector = (afterNdc - centerNdc) * lineViewport;\n"
+    "        float projectedLength = length(difference);\n"
+    "        if (projectedLength > 0.00001) {\n"
+    "            direction = difference / projectedLength;\n"
+    "        }\n"
+    "    }\n"
     "\n"
-    "    float beforeLength = length(beforeVector);\n"
-    "    float afterLength = length(afterVector);\n"
-    "\n"
-    "    vec2 beforeDirection = lineSafeDirection(beforeVector);\n"
-    "    vec2 afterDirection = lineSafeDirection(afterVector);\n"
-    "\n"
-    "    // Stabilize joins when one projected leg becomes too short.\n"
-    "    if (beforeLength < 1.0) beforeDirection = afterDirection;\n"
-    "    if (afterLength < 1.0) afterDirection = beforeDirection;\n"
-    "\n"
-    "    vec2 beforeSide = vec2(-beforeDirection.y, beforeDirection.x);\n"
-    "    vec2 afterSide = vec2(-afterDirection.y, afterDirection.x);\n"
-    "\n"
-    "    float halfWidth = max(0.0, lineWidth) * 0.5;\n"
-    "    vec2 pixelOffset = vec2(0.0);\n"
+    "    vec2 side = vec2(-direction.y, direction.x);\n"
+    "    float halfWidth = max(lineWidth, 0.0) * 0.5;\n"
+    "    vec2 pixelOffset;\n"
     "\n"
     "    if (aBoneIndices.y == 1) {\n"
-    "        vec2 direction = lineSafeDirection(beforeDirection + afterDirection);\n"
-    "        vec2 side = vec2(-direction.y, direction.x);\n"
-    "        vec2 capCoordinates = aBoneWeights.xy * 2.0 - 1.0;\n"
-    "        if (aBoneIndices.z == 1) capCoordinates = vec2(0.0);\n"
-    "        pixelOffset = halfWidth * (direction * capCoordinates.x + side * capCoordinates.y);\n"
+    "        // A circular join or endpoint cap.\n"
+    "        vec2 circlePosition = aBoneWeights.xy * 2.0 - 1.0;\n"
+    "        if (aBoneIndices.z == 1) circlePosition = vec2(0.0);\n"
+    "        pixelOffset = halfWidth * (\n"
+    "            direction * circlePosition.x + side * circlePosition.y\n"
+    "        );\n"
     "    } else {\n"
+    "        // A regular segment quad with square ends.\n"
     "        float sideSign = TEXCOORD.y * 2.0 - 1.0;\n"
-    "        float turn = beforeDirection.x * afterDirection.y - beforeDirection.y * afterDirection.x;\n"
-    "        float alignment = clamp(dot(beforeDirection, afterDirection), -1.0, 1.0);\n"
-    "        float bendAmount = 1.0 - alignment;\n"
-    "\n"
-    "        vec2 selectedSide = (aBoneIndices.x == 0) ? beforeSide : afterSide;\n"
-    "        vec2 straightOffset = selectedSide * (sideSign * halfWidth);\n"
-    "\n"
-    "        vec2 summedSide = beforeSide + afterSide;\n"
-    "        vec2 miter = lineSafeDirection(dot(summedSide, summedSide) > 0.000001 ? summedSide : selectedSide);\n"
-    "\n"
-    "        float divisor = max(abs(dot(miter, afterSide)), 0.0001);\n"
-    "        float miterScale = 1.0 / divisor;\n"
-    "        float limitValue = max(lineMiterLimit, 1.0);\n"
-    "\n"
-    "        vec2 limitedMiterOffset = miter * (sideSign * halfWidth * min(miterScale, limitValue));\n"
-    "\n"
-    "        float outsideSign = (turn >= 0.0) ? -1.0 : 1.0;\n"
-    "        bool outsideEdge = (sideSign * outsideSign) > 0.0;\n"
-    "\n"
-    "        vec2 bevelOffset = outsideEdge\n"
-    "            ? selectedSide * (sideSign * halfWidth)\n"
-    "            : limitedMiterOffset;\n"
-    "\n"
-    "        // If the corner is almost straight, behave like a straight segment.\n"
-    "        float cornerBlend = smoothstep(0.0005, 0.02, bendAmount);\n"
-    "\n"
-    "        // Avoid hard popping around the miter limit.\n"
-    "        float bevelBlend = smoothstep(limitValue * 0.9, limitValue * 1.1, miterScale);\n"
-    "\n"
-    "        vec2 cornerOffset = mix(straightOffset, limitedMiterOffset, cornerBlend);\n"
-    "        pixelOffset = mix(cornerOffset, bevelOffset, bevelBlend);\n"
+    "        pixelOffset = side * sideSign * halfWidth;\n"
     "    }\n"
     "\n"
     "    vec4 expandedClip = centerClip;\n"
-    "    expandedClip.xy += (2.0 * pixelOffset / max(lineViewport, vec2(1.0))) * centerClip.w;\n"
+    "    expandedClip.xy += (\n"
+    "        2.0 * pixelOffset / max(lineViewport, vec2(1.0))\n"
+    "    ) * centerClip.w;\n"
     "\n"
     "    vec4 expandedLocal = lineInverseMvp * expandedClip;\n"
     "    if (abs(expandedLocal.w) > 0.000001) {\n"
@@ -196,6 +158,7 @@ static void screen_line_add_cap(R3D_MeshData* data, Vector3 position, Color colo
 // PUBLIC API
 // ========================================
 
+
 R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
 {
     R3D_Mesh mesh = {0};
@@ -206,7 +169,7 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
         return mesh;
     }
 
-    // Reuse the thin path generator for all arc interpolation.
+    // Reuse the existing arc tessellation and color interpolation.
     R3D_LineStyle thin = {0};
     R3D_MeshData samples = R3D_GenMeshDataLinePath(path, thin);
 
@@ -216,12 +179,20 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
         return mesh;
     }
 
-    // Remove consecutive zero-length segments.
+    // Remove duplicate consecutive points.
     int count = 0;
 
     for (int i = 0; i < samples.vertexCount; i++)
     {
         R3D_Vertex vertex = samples.vertices[i];
+
+        if (!isfinite(vertex.position.x) ||
+            !isfinite(vertex.position.y) ||
+            !isfinite(vertex.position.z))
+        {
+            R3D_UnloadMeshData(samples);
+            return mesh;
+        }
 
         if (count > 0 &&
             Vector3DistanceSqr(
@@ -245,19 +216,25 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
     }
 
     if (count < (path->closed ? 3 : 2) ||
-        count > (INT_MAX - 128) / 16)
+        count > INT_MAX / (6 + 6 * R3D_SCREEN_LINE_CAP_STEPS))
     {
         R3D_UnloadMeshData(samples);
         return mesh;
     }
 
-    int maximumSections = 2 * (count + 1);
-    int maximumCapVertices = path->closed ? 0 : 6 * R3D_SCREEN_LINE_CAP_STEPS;
-    int maximumCapIndices = maximumCapVertices;
+    int segmentCount = path->closed ? count : count - 1;
+
+    // Four vertices and six indices per segment.
+    int quadVertices = segmentCount * 4;
+    int quadIndices = segmentCount * 6;
+
+    // Two semicircles create one complete round join.
+    // Endpoints use the same geometry for rounded caps.
+    int roundVertices = count * 6 * R3D_SCREEN_LINE_CAP_STEPS;
 
     R3D_MeshData data = R3D_LoadMeshData(
-        maximumSections * 2 + maximumCapVertices,
-        (maximumSections - 1) * 6 + maximumCapIndices
+        quadVertices + roundVertices,
+        quadIndices + roundVertices
     );
 
     if (!data.vertices || !data.indices)
@@ -268,128 +245,82 @@ R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path)
     }
 
     float distance = 0.0f;
-    int last = path->closed ? count : count - 1;
 
-    for (int i = 0; i <= last; i++)
+    // Generate independent segment quads.
+    for (int i = 0; i < segmentCount; i++)
     {
-        int current = i % count;
-        int previous = (current + count - 1) % count;
-        int next = (current + 1) % count;
+        int next = (i + 1) % count;
 
-        Vector3 position = samples.vertices[current].position;
-        Color color = samples.vertices[current].color;
+        Vector3 from = samples.vertices[i].position;
+        Vector3 to = samples.vertices[next].position;
 
-        bool start = !path->closed && current == 0;
-        bool end = !path->closed && current == count - 1;
+        Vector3 direction = screen_line_direction(from, to);
 
-        Vector3 before;
-        Vector3 after;
+        Color fromColor = samples.vertices[i].color;
+        Color toColor = samples.vertices[next].color;
 
-        if (start)
+        float segmentLength = Vector3Distance(from, to);
+
+        uint32_t base = (uint32_t)data.vertexCount;
+
+        screen_line_add_section(
+            &data, from, fromColor,
+            direction, direction, distance, 0
+        );
+
+        screen_line_add_section(
+            &data, to, toColor,
+            direction, direction, distance + segmentLength, 0
+        );
+
+        data.indices[data.indexCount++] = base + 0;
+        data.indices[data.indexCount++] = base + 2;
+        data.indices[data.indexCount++] = base + 3;
+
+        data.indices[data.indexCount++] = base + 0;
+        data.indices[data.indexCount++] = base + 3;
+        data.indices[data.indexCount++] = base + 1;
+
+        distance += segmentLength;
+    }
+
+    // Fill every join with a circular section.
+    // This is independent of the projected turning angle.
+    for (int i = 0; i < count; i++)
+    {
+        int next = (i + 1) % count;
+        int previous = (i + count - 1) % count;
+
+        Vector3 position = samples.vertices[i].position;
+        Color color = samples.vertices[i].color;
+
+        Vector3 direction;
+
+        if (!path->closed && i == count - 1)
         {
-            before = after = screen_line_direction(
-                position, samples.vertices[next].position
-            );
-        }
-        else if (end)
-        {
-            before = after = screen_line_direction(
-                samples.vertices[previous].position, position
+            direction = screen_line_direction(
+                samples.vertices[previous].position,
+                position
             );
         }
         else
         {
-            before = screen_line_direction(
-                samples.vertices[previous].position, position
-            );
-
-            after = screen_line_direction(
-                position, samples.vertices[next].position
-            );
-        }
-
-        if (start || end || i == 0 || (path->closed && i == count))
-        {
-            screen_line_add_section(
-                &data, position, color, before, after, distance,
-                (path->closed && i == count) ? 0 : 1
-            );
-        }
-        else
-        {
-            // Two sections allow the shader to create a bevel
-            // when the projected miter exceeds its limit.
-            screen_line_add_section(
-                &data, position, color, before, after, distance, 0
-            );
-
-            screen_line_add_section(
-                &data, position, color, before, after, distance, 1
-            );
-        }
-
-        if (i < last)
-        {
-            distance += Vector3Distance(
+            direction = screen_line_direction(
                 position,
-                samples.vertices[(i + 1) % count].position
+                samples.vertices[next].position
             );
         }
-    }
 
-    int sectionCount = data.vertexCount / 2;
-
-    for (int i = 0; i < sectionCount - 1; i++)
-    {
-        uint32_t a = (uint32_t)(2 * i);
-        uint32_t b = a + 2;
-
-        data.indices[data.indexCount++] = a;
-        data.indices[data.indexCount++] = b;
-        data.indices[data.indexCount++] = b + 1;
-
-        data.indices[data.indexCount++] = a;
-        data.indices[data.indexCount++] = b + 1;
-        data.indices[data.indexCount++] = a + 1;
-    }
-
-    // Connect the incoming and outgoing sections at the
-    // closing seam. Without this, bevel joins can split.
-    if (path->closed)
-    {
-        uint32_t a = (uint32_t)((sectionCount - 1) * 2);
-        uint32_t b = 0;
-
-        data.indices[data.indexCount++] = a;
-        data.indices[data.indexCount++] = b;
-        data.indices[data.indexCount++] = b + 1;
-
-        data.indices[data.indexCount++] = a;
-        data.indices[data.indexCount++] = b + 1;
-        data.indices[data.indexCount++] = a + 1;
-    }
-
-    if (!path->closed)
-    {
-        Vector3 startDirection = screen_line_direction(
-            samples.vertices[0].position,
-            samples.vertices[1].position
-        );
-
-        Vector3 endDirection = screen_line_direction(
-            samples.vertices[count - 2].position,
-            samples.vertices[count - 1].position
+        // Two semicircles form one complete disk.
+        // At path endpoints this also creates rounded caps.
+        screen_line_add_cap(
+            &data, position, color, direction,
+            0.0f, true
         );
 
         screen_line_add_cap(
-            &data, samples.vertices[0].position,
-            samples.vertices[0].color, startDirection, 0.0f, true
-        );
-
-        screen_line_add_cap(
-            &data, samples.vertices[count - 1].position,
-            samples.vertices[count - 1].color, endDirection,
-            distance, false
+            &data, position, color, direction,
+            0.0f, false
         );
     }
 
@@ -437,13 +368,8 @@ void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEff
 
     Matrix inverseMvp = MatrixInvert(mvp);
 
-    float miterLimit = isfinite(style.miterLimit) && style.miterLimit >= 1.0f
-        ? style.miterLimit
-        : 4.0f;
-
     R3D_SetSurfaceEffectUniform(effect, "lineViewport", &viewport);
     R3D_SetSurfaceEffectUniform(effect, "lineWidth", &style.width);
-    R3D_SetSurfaceEffectUniform(effect, "lineMiterLimit", &miterLimit);
     R3D_SetSurfaceEffectUniform(effect, "lineInverseMvp", MatrixToFloat(inverseMvp));
 
     // Screen ribbons are not physically illuminated surfaces.

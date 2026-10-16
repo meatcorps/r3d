@@ -143,6 +143,22 @@ extern "C" {
     R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
 
     /**
+     * Draws an already projected 2D line path using Raylib drawing functions.
+     *
+     * Uses DrawLineEx() for thick segments and DrawCircleV()
+     * for rounded joins and endpoints.
+     *
+     * Vertex colors are interpolated along each segment.
+     * Width is specified in target pixels.
+     *
+     * Call during Raylib 2D drawing, normally after R3D_End().
+     *
+     * This is an overlay renderer and does not use the 3D depth buffer.
+     * The input path remains owned by the caller.
+     */
+    R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float width);
+
+    /**
      * Generates a persistent GPU-expandable screen-space line mesh.
      *
      * The resulting triangles require R3D_DrawScreenLineMesh().
