@@ -101,7 +101,7 @@ typedef struct R3D_ProjectedLinePoint {
     Color color; ///< Interpolated RGBA color.
     float depth; ///< Projected depth in the [0, 1] range.
     float segmentT; ///< Position within the original segment [0, 1].
-    float width;            ///< Interpolated width in target pixels.
+    float width; ///< Interpolated width in target pixels.
 } R3D_ProjectedLinePoint;
 
 /**
@@ -123,7 +123,7 @@ typedef struct R3D_ProjectedLineSegment {
  * Memory must be released using R3D_UnloadProjectedLinePath().
  */
 typedef struct R3D_ProjectedLinePath {
-    R3D_ProjectedLineSegment* segments;
+    R3D_ProjectedLineSegment *segments;
     int count;
     bool closed;
     R3D_LineCapFlags caps;
@@ -132,6 +132,7 @@ typedef struct R3D_ProjectedLinePath {
 
 #ifdef __cplusplus
 extern "C" {
+
 
 #endif
 
@@ -164,6 +165,35 @@ R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath *path);
 R3DAPI bool R3D_UpdateLineMesh(R3D_Mesh *mesh, const R3D_LinePath *path);
 
 /**
+ * Populates four points for an XY-plane rectangle.
+ * The path should be closed.
+ * Existing point colors and widths are preserved.
+ */
+R3DAPI void R3D_SetLineRectangle(R3D_LinePoint points[4], Vector3 center, Vector2 size);
+
+/**
+ * Populates four quarter-circle arcs in the XY plane.
+ * The path should be closed and have four points.
+ * Existing point colors and widths are preserved.
+ */
+R3DAPI void R3D_SetLineCircle(R3D_LinePoint points[4], Vector3 center, float radius);
+
+/**
+ * Populates a sampled XY-plane ellipse.
+ * The path should be closed and count must be at least three.
+ * Existing point colors and widths are preserved.
+ */
+R3DAPI void R3D_SetLineEllipse(R3D_LinePoint *points, int count, Vector3 center, Vector2 radii);
+
+/**
+ * Populates two endpoints and the arc connecting them.
+ * The path should be open.
+ * sweep is expressed in radians.
+ * Existing point colors and widths are preserved.
+ */
+R3DAPI void R3D_SetLineArc(R3D_LinePoint points[2], Vector3 start, Vector3 end, Vector3 normal, float sweep, int subdivisions);
+
+/**
  * Projects a 3D line path into 2D pixel coordinates.
  *
  * Arcs are tessellated before projection.
@@ -189,7 +219,7 @@ R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
  *
  * Draw after R3D_End(). This is an overlay without 3D depth testing.
  */
-R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath* path, float widthScale);
+R3DAPI void R3D_Draw2DProjectedLinePath(const R3D_ProjectedLinePath *path, float widthScale);
 
 /**
  * Generates a persistent GPU-expandable screen-space line mesh.
@@ -232,7 +262,8 @@ R3DAPI R3D_Material R3D_GetDefaultScreenLineMaterial(void);
 *
 * The material is rendered unlit and participates in depth testing.
 */
-R3DAPI void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect *effect, float widthScale, Matrix transform);
+R3DAPI void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect *effect, float widthScale,
+                                   Matrix transform);
 
 #ifdef __cplusplus
 }

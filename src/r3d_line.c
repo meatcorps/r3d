@@ -5,6 +5,92 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+void R3D_SetLineRectangle(R3D_LinePoint points[4], Vector3 center, Vector2 size)
+{
+    if (!points || !isfinite(size.x) || !isfinite(size.y) ||
+        size.x <= 0.0f || size.y <= 0.0f)
+    {
+        return;
+    }
+
+    float halfWidth = size.x * 0.5f;
+    float halfHeight = size.y * 0.5f;
+
+    points[0].position = (Vector3){center.x - halfWidth, center.y - halfHeight, center.z};
+    points[1].position = (Vector3){center.x + halfWidth, center.y - halfHeight, center.z};
+    points[2].position = (Vector3){center.x + halfWidth, center.y + halfHeight, center.z};
+    points[3].position = (Vector3){center.x - halfWidth, center.y + halfHeight, center.z};
+
+    for (int i = 0; i < 4; i++)
+    {
+        points[i].arcToNext = (R3D_LineArc){0};
+    }
+}
+
+void R3D_SetLineCircle(R3D_LinePoint points[4], Vector3 center, float radius)
+{
+    if (!points || !isfinite(radius) || radius <= 0.0f)
+    {
+        return;
+    }
+
+    points[0].position = (Vector3){center.x + radius, center.y, center.z};
+    points[1].position = (Vector3){center.x, center.y + radius, center.z};
+    points[2].position = (Vector3){center.x - radius, center.y, center.z};
+    points[3].position = (Vector3){center.x, center.y - radius, center.z};
+
+    for (int i = 0; i < 4; i++)
+    {
+        points[i].arcToNext = (R3D_LineArc){
+            .sweepAngle = PI * 0.5f,
+            .normal = {0.0f, 0.0f, 1.0f},
+            .subdivisions = 16
+        };
+    }
+}
+
+void R3D_SetLineEllipse(R3D_LinePoint* points, int count, Vector3 center, Vector2 radii)
+{
+    if (!points || count < 3 ||
+        !isfinite(radii.x) || !isfinite(radii.y) ||
+        radii.x <= 0.0f || radii.y <= 0.0f)
+    {
+        return;
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        float angle = 2.0f * PI * (float)i / (float)count;
+
+        points[i].position = (Vector3){
+            center.x + cosf(angle) * radii.x,
+            center.y + sinf(angle) * radii.y,
+            center.z
+        };
+
+        points[i].arcToNext = (R3D_LineArc){0};
+    }
+}
+
+void R3D_SetLineArc(R3D_LinePoint points[2], Vector3 start, Vector3 end, Vector3 normal, float sweep, int subdivisions)
+{
+    if (!points || !isfinite(sweep))
+    {
+        return;
+    }
+
+    points[0].position = start;
+    points[1].position = end;
+
+    points[0].arcToNext = (R3D_LineArc){
+        .sweepAngle = sweep,
+        .normal = normal,
+        .subdivisions = subdivisions
+    };
+
+    points[1].arcToNext = (R3D_LineArc){0};
+}
+
 // ========================================
 // INTERNAL FUNCTIONS
 // ========================================
