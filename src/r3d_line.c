@@ -360,83 +360,127 @@ static int line_ribbon_trim_sharp_joins(R3D_MeshData* samples, bool closed, floa
 }
 
 /*
- * Map the U coordinate along the actual ribbon boundaries.
+ * Build a ribbon with segment-local UV coordinates.
  *
- * The outside and inside edges travel different distances through
- * corners. Using independent distances reduces corner stretching.
+ * Each quad gets its own vertices so adjacent segments can
+ * use different texture directions at sharp corners.
  *
- * Closed paths normalize both edge lengths to the same total
- * centerline length, preserving the UV seam.
+ * Geometry remains unchanged; only vertex duplication
+ * and UV coordinates are affected.
  */
-static void line_ribbon_update_uvs(R3D_MeshData* ribbon, bool closed, float centerlineLength)
+static R3D_MeshData line_ribbon_build_uv_quads(const R3D_MeshData* ribbon)
 {
-    int sections = ribbon->vertexCount / 2;
+    R3D_MeshData result = {0};
 
-    if (sections < 2)
+    int sectionCount = ribbon->vertexCount / 2;
+
+    if (sectionCount < 2)
     {
-        return;
+        return result;
     }
 
-    float totalRight = 0.0f;
-    float totalLeft = 0.0f;
+    int quadCount = sectionCount - 1;
 
-    for (int i = 1; i < sections; i++)
+    if (quadCount > INT_MAX / 6)
     {
-        totalRight += Vector3Distance(
-            ribbon->vertices[(i - 1) * 2].position,
-            ribbon->vertices[i * 2].position
+        return result;
+    }
+
+    result = R3D_LoadMeshData(quadCount * 4, quadCount * 6);
+
+    if (!result.vertices || !result.indices)
+    {
+        R3D_UnloadMeshData(result);
+        return (R3D_MeshData){0};
+    }
+
+    for (int i = 0; i < quadCount; i++)
+    {
+        const R3D_Vertex* start = &ribbon->vertices[i * 2];
+        const R3D_Vertex* end = &ribbon->vertices[(i + 1) * 2];
+
+        Vector3 startCenter = Vector3Scale(
+            Vector3Add(start[0].position, start[1].position),
+            0.5f
         );
 
-        totalLeft += Vector3Distance(
-            ribbon->vertices[(i - 1) * 2 + 1].position,
-            ribbon->vertices[i * 2 + 1].position
+        Vector3 endCenter = Vector3Scale(
+            Vector3Add(end[0].position, end[1].position),
+            0.5f
         );
-    }
 
-    float rightScale = 1.0f;
-    float leftScale = 1.0f;
+        Vector3 direction = Vector3Subtract(endCenter, startCenter);
 
-    if (closed)
-    {
-        if (totalRight > 0.000001f)
+        if (Vector3LengthSqr(direction) < 0.00000001f)
         {
-            rightScale = centerlineLength / totalRight;
+            Vector4 tangent = R3D_UnpackTangent(start[0].tangent);
+
+            direction = (Vector3){
+                tangent.x,
+                tangent.y,
+                tangent.z
+            };
         }
 
-        if (totalLeft > 0.000001f)
+        if (Vector3LengthSqr(direction) < 0.00000001f)
         {
-            leftScale = centerlineLength / totalLeft;
+            direction = (Vector3){1.0f, 0.0f, 0.0f};
         }
-    }
 
-    float rightDistance = 0.0f;
-    float leftDistance = 0.0f;
+        direction = Vector3Normalize(direction);
 
-    for (int i = 0; i < sections; i++)
-    {
-        if (i > 0)
+        // Original centerline distances were stored during
+        // ribbon construction, before any UV remapping.
+        float startDistance = R3D_UnpackTexCoord(start[0].texcoord).x;
+        float endDistance = R3D_UnpackTexCoord(end[0].texcoord).x;
+
+        int base = result.vertexCount;
+
+        result.vertices[base + 0] = start[0];
+        result.vertices[base + 1] = start[1];
+        result.vertices[base + 2] = end[0];
+        result.vertices[base + 3] = end[1];
+
+        // Project each vertex onto this segment's direction.
+        // This avoids scaling the two ribbon boundaries
+        // independently around the entire closed path.
+        for (int j = 0; j < 4; j++)
         {
-            rightDistance += Vector3Distance(
-                ribbon->vertices[(i - 1) * 2].position,
-                ribbon->vertices[i * 2].position
+            R3D_Vertex* vertex = &result.vertices[base + j];
+
+            bool atEnd = j >= 2;
+            Vector3 center = atEnd ? endCenter : startCenter;
+            float distance = atEnd ? endDistance : startDistance;
+
+            float offset = Vector3DotProduct(
+                Vector3Subtract(vertex->position, center),
+                direction
             );
 
-            leftDistance += Vector3Distance(
-                ribbon->vertices[(i - 1) * 2 + 1].position,
-                ribbon->vertices[i * 2 + 1].position
+            float u = distance + offset;
+            float v = (j & 1) ? 1.0f : 0.0f;
+
+            R3D_PackTexCoord(
+                vertex->texcoord,
+                (Vector2){u, v}
             );
         }
 
-        R3D_PackTexCoord(
-            ribbon->vertices[i * 2].texcoord,
-            (Vector2){rightDistance * rightScale, 0.0f}
-        );
+        // Preserve the original triangle winding.
+        uint32_t a = (uint32_t)base;
 
-        R3D_PackTexCoord(
-            ribbon->vertices[i * 2 + 1].texcoord,
-            (Vector2){leftDistance * leftScale, 1.0f}
-        );
+        result.indices[result.indexCount++] = a + 0;
+        result.indices[result.indexCount++] = a + 2;
+        result.indices[result.indexCount++] = a + 3;
+
+        result.indices[result.indexCount++] = a + 0;
+        result.indices[result.indexCount++] = a + 3;
+        result.indices[result.indexCount++] = a + 1;
+
+        result.vertexCount += 4;
     }
+
+    return result;
 }
 
 static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_LineStyle style)
@@ -718,7 +762,13 @@ static R3D_MeshData line_generate_world_ribbon(const R3D_LinePath* path, R3D_Lin
     ribbon.indexCount = index;
 
     // Generate UVs using the lengths of the actual ribbon edges.
-    line_ribbon_update_uvs(&ribbon, path->closed, distance);
+    R3D_MeshData texturedRibbon = line_ribbon_build_uv_quads(&ribbon);
+
+    if (R3D_IsMeshDataValid(texturedRibbon))
+    {
+        R3D_UnloadMeshData(ribbon);
+        ribbon = texturedRibbon;
+    }
 
     R3D_UnloadMeshData(samples);
 
