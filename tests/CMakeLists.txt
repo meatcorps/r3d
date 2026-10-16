@@ -103,3 +103,16 @@ if(R3D_TESTS_GPU)
         )
     endforeach()
 endif()
+
+
+# ========================================
+# Manifold Native Integration Test
+# ========================================
+
+if(R3D_SUPPORT_MANIFOLD)
+    add_executable(r3d_test_manifold manifold_smoke.c)
+    target_link_libraries(r3d_test_manifold PRIVATE r3d manifold::manifoldc)
+
+    add_test(NAME manifold_native COMMAND r3d_test_manifold)
+    set_tests_properties(manifold_native PROPERTIES LABELS "manifold;headless")
+endif()

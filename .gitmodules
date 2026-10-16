@@ -5,3 +5,6 @@
 	path = external/assimp
 	url = https://github.com/meatcorps/assimp.git
 	branch = meatcorps/gltf-zero-accessor
+[submodule "external/manifold"]
+	path = external/manifold
+	url = https://github.com/elalish/manifold.git

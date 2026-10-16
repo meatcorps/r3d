@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.8)
+﻿cmake_minimum_required(VERSION 3.18)
 project(r3d VERSION 0.11.0 LANGUAGES C CXX)
 
 # ========================================
@@ -29,10 +29,13 @@ endif()
 
 set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" "${R3D_ROOT_PATH}/cmake")
 
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(R3D_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(R3D_RAYLIB_VENDORED "Use vendored raylib from submodule" OFF)
 option(R3D_ASSIMP_VENDORED "Use vendored assimp from submodule" OFF)
 option(R3D_SUPPORT_ASSIMP "Build with Assimp importer support" ON)
+option(R3D_SUPPORT_MANIFOLD "Build with Manifold geometry support" OFF)
+option(R3D_MANIFOLD_VENDORED "Use vendored Manifold from submodule" ON)
 option(R3D_BUILD_EXAMPLES "Build the examples" ${R3D_IS_MAIN})
 option(R3D_BUILD_DOCS "Build the doxygen documentation" OFF)
 option(R3D_BUILD_TESTS "Build headless regression tests" ${R3D_IS_MAIN})
@@ -155,6 +158,50 @@ if(R3D_SUPPORT_ASSIMP)
                 "Please install Assimp development files for your platform, "
                 "or use the vendored version included with this project.")
         endif()
+    endif()
+endif()
+
+# ========================================
+# Dependencies: Manifold
+# ========================================
+
+if(R3D_SUPPORT_MANIFOLD)
+    if(R3D_MANIFOLD_VENDORED)
+        set(R3D_MANIFOLD_SUBMODULE_PATH "${R3D_ROOT_PATH}/external/manifold")
+        set(R3D_MANIFOLD_CMAKELISTS "${R3D_MANIFOLD_SUBMODULE_PATH}/CMakeLists.txt")
+
+        if(NOT EXISTS "${R3D_MANIFOLD_CMAKELISTS}")
+            message(FATAL_ERROR
+                    "Vendored Manifold not found!\n"
+                    "Missing: ${R3D_MANIFOLD_CMAKELISTS}\n"
+                    "Please initialize the submodule with:\n"
+                    "    git submodule update --init --recursive")
+        endif()
+
+        message(STATUS "Using vendored Manifold from: ${R3D_MANIFOLD_SUBMODULE_PATH}")
+
+        set(MANIFOLD_TEST OFF CACHE BOOL "" FORCE)
+        set(MANIFOLD_PYBIND OFF CACHE BOOL "" FORCE)
+        set(MANIFOLD_JSBIND OFF CACHE BOOL "" FORCE)
+        set(MANIFOLD_PAR OFF CACHE BOOL "" FORCE)
+        set(MANIFOLD_CROSS_SECTION ON CACHE BOOL "" FORCE)
+        set(MANIFOLD_CBIND ON CACHE BOOL "" FORCE)
+        set(MANIFOLD_CROSS_SECTION_BACKEND "clipper2" CACHE STRING "" FORCE)
+        set(MANIFOLD_USE_BUILTIN_CLIPPER2 ON CACHE BOOL "" FORCE)
+
+        add_subdirectory("${R3D_MANIFOLD_SUBMODULE_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/manifold")
+
+        set_target_properties(manifold manifoldc PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY "${R3D_RUNTIME_OUTPUT_DIRECTORY}"
+                LIBRARY_OUTPUT_DIRECTORY "${R3D_LIBRARY_OUTPUT_DIRECTORY}"
+                ARCHIVE_OUTPUT_DIRECTORY "${R3D_ARCHIVE_OUTPUT_DIRECTORY}"
+        )
+    else()
+        find_package(manifold 3.5.2 CONFIG REQUIRED)
+    endif()
+
+    if(NOT TARGET manifold::manifoldc)
+        message(FATAL_ERROR "Manifold C API target manifold::manifoldc is unavailable")
     endif()
 endif()
 
@@ -426,8 +473,15 @@ target_link_libraries(${PROJECT_NAME}
 
 if(R3D_SUPPORT_ASSIMP)
     target_link_libraries(${PROJECT_NAME}
-        PRIVATE
+            PRIVATE
             "${R3D_ASSIMP_LIB}"
+    )
+endif()
+
+if(R3D_SUPPORT_MANIFOLD)
+    target_link_libraries(${PROJECT_NAME}
+            PRIVATE
+            manifold::manifoldc
     )
 endif()
 
