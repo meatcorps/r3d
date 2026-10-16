@@ -360,6 +360,12 @@ add_library(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/src/r3d_vertex.c"
 )
 
+if(R3D_SUPPORT_MANIFOLD)
+    target_sources(${PROJECT_NAME} PRIVATE
+            "${R3D_ROOT_PATH}/src/r3d_manifold.c"
+    )
+endif()
+
 # ========================================
 # Embedded Resources
 # ========================================
@@ -480,7 +486,7 @@ endif()
 
 if(R3D_SUPPORT_MANIFOLD)
     target_link_libraries(${PROJECT_NAME}
-            PRIVATE
+            PUBLIC
             manifold::manifoldc
     )
 endif()
