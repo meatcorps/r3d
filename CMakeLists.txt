@@ -297,6 +297,8 @@ add_library(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/src/r3d_mesh.c"
     "${R3D_ROOT_PATH}/src/r3d_mesh_data.c"
     "${R3D_ROOT_PATH}/src/r3d_line.c"
+    "${R3D_ROOT_PATH}/src/r3d_line_screen.c"
+    "${R3D_ROOT_PATH}/src/r3d_line_projection.c"
     "${R3D_ROOT_PATH}/src/r3d_shape_key.c"
     "${R3D_ROOT_PATH}/src/r3d_shape_key_gpu.c"
     "${R3D_ROOT_PATH}/src/r3d_model.c"

@@ -10,6 +10,8 @@
 #define R3D_LINE_H
 
 #include "./r3d_mesh.h"
+#include "./r3d_draw.h"
+#include "./r3d_surface_effect.h"
 
 /**
  * Defines how line width is interpreted.
@@ -68,6 +70,41 @@ typedef struct R3D_LineStyle {
     float miterLimit;               ///< Maximum miter length relative to half-width. Zero defaults to 4.
 } R3D_LineStyle;
 
+
+/**
+ * One projected point, including its original path metadata.
+ */
+typedef struct R3D_ProjectedLinePoint {
+    Vector2 position;       ///< Target pixel coordinates, top-left origin.
+    Color color;            ///< Interpolated RGBA color.
+    float depth;            ///< Projected depth in the [0, 1] range.
+    float segmentT;         ///< Position within the original segment [0, 1].
+} R3D_ProjectedLinePoint;
+
+/**
+ * A projected and near/far-clipped line segment.
+ *
+ * Each segment is independent, so gaps caused by clipping
+ * are represented correctly.
+ */
+typedef struct R3D_ProjectedLineSegment {
+    R3D_ProjectedLinePoint start;
+    R3D_ProjectedLinePoint end;
+    R3D_LineArc sourceArc;
+    int sourceSegment;
+} R3D_ProjectedLineSegment;
+
+/**
+ * CPU-side projected line path.
+ *
+ * Memory must be released using R3D_UnloadProjectedLinePath().
+ */
+typedef struct R3D_ProjectedLinePath {
+    R3D_ProjectedLineSegment* segments;
+    int count;
+    bool closed;
+} R3D_ProjectedLinePath;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +124,45 @@ extern "C" {
      * The caller must release it using R3D_UnloadMesh().
      */
     R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style);
+
+
+    /**
+     * Projects a 3D line path into 2D pixel coordinates.
+     *
+     * Arcs are tessellated before projection.
+     * Segments crossing the near/far planes are clipped.
+     * The result preserves source segment and arc metadata.
+     *
+     * Does not require an active R3D drawing session.
+     */
+    R3DAPI R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View view);
+
+    /**
+     * Releases the projected CPU-side segments.
+     */
+    R3DAPI void R3D_UnloadProjectedLinePath(R3D_ProjectedLinePath path);
+
+    /**
+     * Generates a persistent GPU-expandable screen-space line mesh.
+     *
+     * The resulting triangles require R3D_DrawScreenLineMesh().
+     */
+    R3DAPI R3D_Mesh R3D_GenMeshScreenLinePath(const R3D_LinePath* path);
+
+    /**
+     * Loads the reusable screen-space line vertex effect.
+     * Create once and share across screen-line meshes.
+     */
+    R3DAPI R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void);
+
+    /**
+     * Draws a screen-space line inside an R3D session.
+     *
+     * Width is measured in internal render-target pixels.
+     * The transform is applied to the original 3D path.
+     * Material is rendered unlit, alpha-blended and double-sided.
+     */
+    R3DAPI void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect* effect, R3D_LineStyle style, Matrix transform);
 
 #ifdef __cplusplus
 }
