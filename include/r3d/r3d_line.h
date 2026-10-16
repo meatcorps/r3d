@@ -212,6 +212,15 @@ R3DAPI bool R3D_UpdateScreenLineMesh(R3D_Mesh *mesh, const R3D_LinePath *path);
 R3DAPI R3D_SurfaceEffect *R3D_LoadScreenLineEffect(void);
 
 /**
+ * Returns the recommended default material for GPU screen-space lines.
+ *
+ * Uses unlit, double-sided, opaque rendering with depth testing.
+ * Callers can modify transparency, blending, emission and other
+ * properties without the line renderer overriding them.
+ */
+R3DAPI R3D_Material R3D_GetDefaultScreenLineMaterial(void);
+
+/**
 * Draws a GPU-expanded screen-space line inside an R3D session.
 *
 * Point widths are stored in the mesh in internal render-target pixels.

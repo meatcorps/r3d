@@ -467,6 +467,18 @@ R3D_SurfaceEffect* R3D_LoadScreenLineEffect(void)
     return R3D_LoadSurfaceEffectFromMemory(R3D_SCREEN_LINE_EFFECT);
 }
 
+R3D_Material R3D_GetDefaultScreenLineMaterial(void)
+{
+    R3D_Material material = R3D_GetDefaultMaterial();
+
+    material.unlit = true;
+    material.cullMode = R3D_CULL_NONE;
+    material.transparencyMode = R3D_TRANSPARENCY_OPAQUE;
+    material.depth.mode = R3D_COMPARE_LESS;
+
+    return material;
+}
+
 void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEffect* effect, float widthScale, Matrix transform)
 {
     if (!effect || !R3D_IsMeshValid(mesh) ||
@@ -500,14 +512,6 @@ void R3D_DrawScreenLineMesh(R3D_Mesh mesh, R3D_Material material, R3D_SurfaceEff
     R3D_SetSurfaceEffectUniform(effect, "lineViewport", &viewport);
     R3D_SetSurfaceEffectUniform(effect, "lineScale", &widthScale);
     R3D_SetSurfaceEffectUniform(effect, "lineInverseMvp", MatrixToFloat(inverseMvp));
-
-    // Screen ribbons are not physically illuminated surfaces.
-    // Screen ribbons participate in normal depth testing.
-    // Opaque rendering also writes depth between ribbon triangles.
-    material.unlit = true;
-    material.cullMode = R3D_CULL_NONE;
-    material.transparencyMode = R3D_TRANSPARENCY_OPAQUE;
-    material.depth.mode = R3D_COMPARE_LESS;
 
     R3D_PushSurfaceEffect(effect);
     R3D_DrawMeshPro(mesh, material, transform);
