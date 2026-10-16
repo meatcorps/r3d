@@ -170,8 +170,10 @@ R3D_Mesh R3D_GenMeshScreenLinePathEx(const R3D_LinePath* path, R3D_LineCapFlags 
     }
 
     // Reuse the existing arc tessellation and color interpolation.
-    R3D_LineStyle thin = {0};
-    R3D_MeshData samples = R3D_GenMeshDataLinePath(path, thin);
+    R3D_LinePath thinPath = *path;
+    thinPath.style.widthMode = R3D_LINE_WIDTH_SCREEN;
+
+    R3D_MeshData samples = R3D_GenMeshDataLinePath(&thinPath);
 
     if (!R3D_IsMeshDataValid(samples))
     {

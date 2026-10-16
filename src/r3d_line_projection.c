@@ -81,8 +81,10 @@ R3D_ProjectedLinePath R3D_ProjectLinePath2D(const R3D_LinePath* path, R3D_View v
         return result;
     }
 
-    R3D_LineStyle thinStyle = {0};
-    R3D_MeshData samples = R3D_GenMeshDataLinePath(path, thinStyle);
+    R3D_LinePath thinPath = *path;
+    thinPath.style.widthMode = R3D_LINE_WIDTH_SCREEN;
+
+    R3D_MeshData samples = R3D_GenMeshDataLinePath(&thinPath);
 
     if (!R3D_IsMeshDataValid(samples))
     {

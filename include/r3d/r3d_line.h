@@ -49,39 +49,49 @@ typedef struct R3D_LineArc {
 } R3D_LineArc;
 
 /**
+ * Defines the appearance of a complete line path.
+ *
+ * Width is the default thickness for connections whose
+ * widthToNext is zero.
+ *
+ * WORLD widths are measured in world units.
+ * SCREEN widths are measured in pixels.
+ */
+typedef struct R3D_LineStyle {
+    float width;
+    R3D_LineWidthMode widthMode;
+    Vector3 normal;
+    float miterLimit;
+    R3D_LineCapFlags caps;
+} R3D_LineStyle;
+
+/**
  * One colored point in a line path.
+ *
+ * widthToNext controls the connection from this point to
+ * the next point. Zero inherits LinePath.style.width.
+ *
+ * The final point's widthToNext is ignored for open paths.
  */
 typedef struct R3D_LinePoint {
     Vector3 position;
     Color color;
     R3D_LineArc arcToNext;
+    float width;
 } R3D_LinePoint;
 
 /**
- * Ordered sequence of line points.
+ * Complete line path configuration.
  *
- * The point array remains owned by the caller.
- * For closed paths, the last point connects to the first.
+ * The caller owns the points array.
+ * Changes to the path require an explicit mesh update.
  */
 typedef struct R3D_LinePath {
     const R3D_LinePoint* points;
     int count;
     bool closed;
+    R3D_LineStyle style;
 } R3D_LinePath;
-
-/**
- * Geometric properties of a line path.
- *
- * SCREEN mode keeps native thin lines until Phase 3.
- * WORLD mode generates a triangle ribbon.
- */
-typedef struct R3D_LineStyle {
-    float width;                    ///< Width in world units for WORLD mode.
-    R3D_LineWidthMode widthMode;    ///< WORLD or SCREEN.
-    Vector3 normal;                 ///< Reference normal for WORLD ribbons. Zero selects automatic orientation.
-    float miterLimit;               ///< Maximum miter length relative to half-width. Zero defaults to 4.
-} R3D_LineStyle;
-
 
 /**
  * One projected point, including its original path metadata.
@@ -122,45 +132,32 @@ extern "C" {
 #endif
 
     /**
-     * Generates CPU-side line geometry.
+     * Generates CPU-side line geometry using path.style.
      *
-     * The caller owns the returned mesh data and must release it
-     * using R3D_UnloadMeshData().
+     * WORLD mode produces a triangle ribbon.
+     * SCREEN mode produces a native thin line strip/loop.
+     *
+     * The caller owns the returned mesh data.
      */
-    R3DAPI R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path, R3D_LineStyle style);
+    R3DAPI R3D_MeshData R3D_GenMeshDataLinePath(const R3D_LinePath* path);
 
     /**
-     * Generates CPU-side line geometry with configurable end caps.
+     * Generates a mesh using path.style.
      *
-     * Rounded caps are supported for WORLD mode.
-     * SCREEN thin-line mode ignores the cap flags.
-     * Closed paths have no endpoint caps.
+     * WORLD mode bakes connection widths into the geometry.
+     * It does not support draw-time width scaling.
      */
-    R3DAPI R3D_MeshData R3D_GenMeshDataLinePathEx(
-        const R3D_LinePath* path,
-        R3D_LineStyle style,
-        R3D_LineCapFlags caps
-    );
+    R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path);
 
     /**
-     * Generates an R3D mesh from a colored line path.
+     * Regenerates geometry and uploads it into an existing mesh.
      *
-     * The returned mesh uses LINE_STRIP or LINE_LOOP primitives.
-     * The caller must release it using R3D_UnloadMesh().
-     */
-    R3DAPI R3D_Mesh R3D_GenMeshLinePath(const R3D_LinePath* path, R3D_LineStyle style);
-
-    /**
-     * Generates a line mesh with configurable endpoint caps.
+     * Supports changed points, colors, widths, arcs and point counts.
+     * Uses R3D_UpdateMesh() to reuse existing GPU storage where possible.
      *
-     * In WORLD mode, rounded caps are real triangle geometry.
-     * Existing R3D_GenMeshLinePath() keeps flat endpoints.
+     * The mesh must already have been created.
      */
-    R3DAPI R3D_Mesh R3D_GenMeshLinePathEx(
-        const R3D_LinePath* path,
-        R3D_LineStyle style,
-        R3D_LineCapFlags caps
-    );
+    R3DAPI bool R3D_UpdateLineMesh(R3D_Mesh* mesh, const R3D_LinePath* path);
 
     /**
      * Projects a 3D line path into 2D pixel coordinates.
