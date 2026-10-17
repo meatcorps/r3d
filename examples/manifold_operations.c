@@ -49,6 +49,7 @@ int main(void)
 
     R3D_Material material = R3D_GetDefaultMaterial();
     material.albedo.texture = checker;
+    //material.cullMode = R3D_CULL_NONE;
 
     R3D_Material groundMaterial = R3D_GetDefaultMaterial();
     groundMaterial.albedo.color = LIGHTGRAY;
@@ -171,7 +172,7 @@ int main(void)
 
             R3D_DrawMesh(
                 ground, groundMaterial,
-                (Vector3){0.0f, -1.05f, 0.0f}, 1.0f
+                (Vector3){0.0f, -2.0f, 0.0f}, 1.0f
             );
 
             R3D_DrawMesh(

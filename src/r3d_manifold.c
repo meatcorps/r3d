@@ -247,91 +247,52 @@ cleanup:
 // CONVENIENCE OPERATIONS
 // ========================================
 
-typedef struct R3D_ManifoldCapUV {
-    Vector3 normal;
-    Vector3 axisU;
-    Vector3 axisV;
-    double offset;
-    double tolerance;
-    int oldPropertyCount;
-    int newPropertyCount;
-} R3D_ManifoldCapUV;
-
-static void r3d_manifold_cap_uv_callback(double* output, ManifoldVec3 position, const double* source, void* context)
+static void r3d_manifold_apply_slice_uvs(R3D_MeshData* data, Vector3 normal, float offset)
 {
-    const R3D_ManifoldCapUV* cap = context;
-
-    // Preserve all existing properties, including normals, UVs and colors.
-    for (int i = 0; i < cap->newPropertyCount; i++)
-    {
-        output[i] = i < cap->oldPropertyCount ? source[i] : 0.0;
-    }
-
-    if (cap->oldPropertyCount < 3) return;
-
-    double distance =
-        position.x * cap->normal.x +
-        position.y * cap->normal.y +
-        position.z * cap->normal.z - cap->offset;
-
-    // Manifold has already separated sharp face attributes.
-    // Only normals facing along the cut plane belong to the cap.
-    double alignment =
-        source[0] * cap->normal.x +
-        source[1] * cap->normal.y +
-        source[2] * cap->normal.z;
-
-    if (fabs(distance) > cap->tolerance || fabs(alignment) < 0.99)
-    {
-        return;
-    }
-
-    // Properties 0-2: normals
-    // Properties 3-4: UV coordinates
-    // Properties 5-8: RGBA (when present)
-    output[3] = 0.5 * (
-        position.x * cap->axisU.x +
-        position.y * cap->axisU.y +
-        position.z * cap->axisU.z
-    );
-
-    output[4] = 0.5 * (
-        position.x * cap->axisV.x +
-        position.y * cap->axisV.y +
-        position.z * cap->axisV.z
-    );
-}
-
-static ManifoldManifold* r3d_manifold_map_cap_uvs(ManifoldManifold* solid, Vector3 normal, float offset)
-{
-    size_t propertyCount = manifold_num_prop(solid);
-
-    if (propertyCount > INT_MAX) return NULL;
+    if (!data || !R3D_IsMeshDataValid(*data)) return;
 
     normal = Vector3Normalize(normal);
 
     Vector3 reference = fabsf(normal.y) < 0.9f
         ? (Vector3){0.0f, 1.0f, 0.0f}
-        : (Vector3){0.0f, 0.0f, 1.0f};
+    : (Vector3){0.0f, 0.0f, 1.0f};
 
-    R3D_ManifoldCapUV cap = {
-        .normal = normal,
-        .axisU = Vector3Normalize(Vector3CrossProduct(reference, normal)),
-        .offset = offset,
-        .tolerance = fmax(0.00001, manifold_get_tolerance(solid) * 8.0),
-        .oldPropertyCount = (int)propertyCount,
-        .newPropertyCount = (int)(propertyCount < 5 ? 5 : propertyCount)
-    };
+    Vector3 axisU = Vector3Normalize(Vector3CrossProduct(reference, normal));
+    Vector3 axisV = Vector3CrossProduct(normal, axisU);
 
-    cap.axisV = Vector3CrossProduct(normal, cap.axisU);
+    BoundingBox bounds = R3D_CalculateMeshDataBoundingBox(*data);
+    Vector3 size = Vector3Subtract(bounds.max, bounds.min);
 
-    return manifold_set_properties(
-        manifold_alloc_manifold(),
-        solid,
-        cap.newPropertyCount,
-        r3d_manifold_cap_uv_callback,
-        &cap
-    );
+    float tolerance = 0.0001f * fmaxf(1.0f, fmaxf(size.x, fmaxf(size.y, size.z)));
+
+    for (int i = 0; i < data->vertexCount; i++)
+    {
+        R3D_Vertex* vertex = &data->vertices[i];
+
+        Vector3 vertexNormal = R3D_UnpackNormal(vertex->normal);
+        Vector3 position = vertex->position;
+
+        float distance = Vector3DotProduct(position, normal) - offset;
+        float alignment = Vector3DotProduct(vertexNormal, normal);
+
+        // Only vertices on the new planar cut surface.
+        if (fabsf(distance) > tolerance || fabsf(alignment) < 0.99f)
+        {
+            continue;
+        }
+
+        Vector2 uv = {
+            0.5f + 0.5f * Vector3DotProduct(position, axisU),
+            0.5f + 0.5f * Vector3DotProduct(position, axisV)
+        };
+
+        R3D_PackTexCoord(vertex->texcoord, uv);
+
+        // New caps inherit the existing material without transparent colors.
+        vertex->color = WHITE;
+    }
+
+    R3D_GenMeshDataTangents(data, R3D_PRIMITIVE_TRIANGLES);
 }
 
 static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid, const Vector3* sliceNormal, float sliceOffset)
@@ -343,29 +304,16 @@ static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid, const Ve
         return data;
     }
 
-    // Geometry operations may create new faces. Recalculate normals,
-    // preserving the R3D UV and color property channels.
     ManifoldManifold* withNormals = manifold_calculate_normals(
         manifold_alloc_manifold(), solid, 0, 52.5
     );
 
     if (!withNormals) return data;
 
-    ManifoldManifold* withCapUVs = NULL;
-
-    if (sliceNormal && manifold_status(withNormals) == MANIFOLD_NO_ERROR)
-    {
-        withCapUVs = r3d_manifold_map_cap_uvs(
-            withNormals, *sliceNormal, sliceOffset
-        );
-    }
-
-    ManifoldManifold* renderSolid = sliceNormal ? withCapUVs : withNormals;
-
-    if (renderSolid && manifold_status(renderSolid) == MANIFOLD_NO_ERROR)
+    if (manifold_status(withNormals) == MANIFOLD_NO_ERROR)
     {
         ManifoldMeshGL* output = manifold_get_meshgl(
-            manifold_alloc_meshgl(), renderSolid
+            manifold_alloc_meshgl(), withNormals
         );
 
         if (output)
@@ -375,17 +323,22 @@ static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid, const Ve
         }
     }
 
-    if (withCapUVs) manifold_delete_manifold(withCapUVs);
-        manifold_delete_manifold(withNormals);
+    manifold_delete_manifold(withNormals);
 
-    // Native primitives/extrusions may not contain UV properties.
-    // Supply a simple planar default. Advanced mapping remains manual.
-    if (R3D_IsMeshDataValid(data) && !sliceNormal && manifold_num_prop(solid) < 5)
+    if (R3D_IsMeshDataValid(data))
     {
-        R3D_GenMeshDataUVsPlanar(
-            &data, (Vector2){1.0f, 1.0f}, (Vector3){0.0f, 0.0f, 1.0f}
-        );
-        R3D_GenMeshDataTangents(&data, R3D_PRIMITIVE_TRIANGLES);
+        if (sliceNormal)
+        {
+            r3d_manifold_apply_slice_uvs(&data, *sliceNormal, sliceOffset);
+        }
+        else if (manifold_num_prop(solid) < 5)
+        {
+            R3D_GenMeshDataUVsPlanar(
+                &data, (Vector2){1.0f, 1.0f}, (Vector3){0.0f, 0.0f, 1.0f}
+            );
+
+            R3D_GenMeshDataTangents(&data, R3D_PRIMITIVE_TRIANGLES);
+        }
     }
 
     return data;
