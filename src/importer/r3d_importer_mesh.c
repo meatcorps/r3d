@@ -667,6 +667,7 @@ static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const
                 ? &model->shapeKeySets[meshIndex]
                 : NULL;
 
+
         if (!load_mesh_internal(
             importer,
             &model->meshes[meshIndex],
@@ -676,6 +677,9 @@ static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const
             mesh,
             globalTransform,
             mesh->mNumBones > 0))
+        {
+            return false;
+        }
 
         model->meshMaterials[meshIndex] = mesh->mMaterialIndex;
     }
