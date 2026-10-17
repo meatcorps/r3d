@@ -1,6 +1,6 @@
 #include <r3d/r3d_manifold.h>
 #include <r3d/r3d_vertex.h>
-
+#include <raymath.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <limits.h>
@@ -247,7 +247,94 @@ cleanup:
 // CONVENIENCE OPERATIONS
 // ========================================
 
-static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid)
+typedef struct R3D_ManifoldCapUV {
+    Vector3 normal;
+    Vector3 axisU;
+    Vector3 axisV;
+    double offset;
+    double tolerance;
+    int oldPropertyCount;
+    int newPropertyCount;
+} R3D_ManifoldCapUV;
+
+static void r3d_manifold_cap_uv_callback(double* output, ManifoldVec3 position, const double* source, void* context)
+{
+    const R3D_ManifoldCapUV* cap = context;
+
+    // Preserve all existing properties, including normals, UVs and colors.
+    for (int i = 0; i < cap->newPropertyCount; i++)
+    {
+        output[i] = i < cap->oldPropertyCount ? source[i] : 0.0;
+    }
+
+    if (cap->oldPropertyCount < 3) return;
+
+    double distance =
+        position.x * cap->normal.x +
+        position.y * cap->normal.y +
+        position.z * cap->normal.z - cap->offset;
+
+    // Manifold has already separated sharp face attributes.
+    // Only normals facing along the cut plane belong to the cap.
+    double alignment =
+        source[0] * cap->normal.x +
+        source[1] * cap->normal.y +
+        source[2] * cap->normal.z;
+
+    if (fabs(distance) > cap->tolerance || fabs(alignment) < 0.99)
+    {
+        return;
+    }
+
+    // Properties 0-2: normals
+    // Properties 3-4: UV coordinates
+    // Properties 5-8: RGBA (when present)
+    output[3] = 0.5 * (
+        position.x * cap->axisU.x +
+        position.y * cap->axisU.y +
+        position.z * cap->axisU.z
+    );
+
+    output[4] = 0.5 * (
+        position.x * cap->axisV.x +
+        position.y * cap->axisV.y +
+        position.z * cap->axisV.z
+    );
+}
+
+static ManifoldManifold* r3d_manifold_map_cap_uvs(ManifoldManifold* solid, Vector3 normal, float offset)
+{
+    size_t propertyCount = manifold_num_prop(solid);
+
+    if (propertyCount > INT_MAX) return NULL;
+
+    normal = Vector3Normalize(normal);
+
+    Vector3 reference = fabsf(normal.y) < 0.9f
+        ? (Vector3){0.0f, 1.0f, 0.0f}
+        : (Vector3){0.0f, 0.0f, 1.0f};
+
+    R3D_ManifoldCapUV cap = {
+        .normal = normal,
+        .axisU = Vector3Normalize(Vector3CrossProduct(reference, normal)),
+        .offset = offset,
+        .tolerance = fmax(0.00001, manifold_get_tolerance(solid) * 8.0),
+        .oldPropertyCount = (int)propertyCount,
+        .newPropertyCount = (int)(propertyCount < 5 ? 5 : propertyCount)
+    };
+
+    cap.axisV = Vector3CrossProduct(normal, cap.axisU);
+
+    return manifold_set_properties(
+        manifold_alloc_manifold(),
+        solid,
+        cap.newPropertyCount,
+        r3d_manifold_cap_uv_callback,
+        &cap
+    );
+}
+
+static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid, const Vector3* sliceNormal, float sliceOffset)
 {
     R3D_MeshData data = {0};
 
@@ -264,10 +351,21 @@ static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid)
 
     if (!withNormals) return data;
 
-    if (manifold_status(withNormals) == MANIFOLD_NO_ERROR)
+    ManifoldManifold* withCapUVs = NULL;
+
+    if (sliceNormal && manifold_status(withNormals) == MANIFOLD_NO_ERROR)
+    {
+        withCapUVs = r3d_manifold_map_cap_uvs(
+            withNormals, *sliceNormal, sliceOffset
+        );
+    }
+
+    ManifoldManifold* renderSolid = sliceNormal ? withCapUVs : withNormals;
+
+    if (renderSolid && manifold_status(renderSolid) == MANIFOLD_NO_ERROR)
     {
         ManifoldMeshGL* output = manifold_get_meshgl(
-            manifold_alloc_meshgl(), withNormals
+            manifold_alloc_meshgl(), renderSolid
         );
 
         if (output)
@@ -277,11 +375,12 @@ static R3D_MeshData r3d_manifold_convert_solid(ManifoldManifold* solid)
         }
     }
 
-    manifold_delete_manifold(withNormals);
+    if (withCapUVs) manifold_delete_manifold(withCapUVs);
+        manifold_delete_manifold(withNormals);
 
     // Native primitives/extrusions may not contain UV properties.
     // Supply a simple planar default. Advanced mapping remains manual.
-    if (R3D_IsMeshDataValid(data) && manifold_num_prop(solid) < 5)
+    if (R3D_IsMeshDataValid(data) && !sliceNormal && manifold_num_prop(solid) < 5)
     {
         R3D_GenMeshDataUVsPlanar(
             &data, (Vector2){1.0f, 1.0f}, (Vector3){0.0f, 0.0f, 1.0f}
@@ -344,7 +443,7 @@ bool R3D_UpdateMeshFromManifold(R3D_Mesh* mesh, ManifoldManifold* solid)
 {
     if (!mesh || !solid) return false;
 
-    R3D_MeshData data = r3d_manifold_convert_solid(solid);
+    R3D_MeshData data = r3d_manifold_convert_solid(solid, NULL, 0.0f);
 
     if (!R3D_IsMeshDataValid(data)) return false;
 
@@ -386,7 +485,7 @@ static bool r3d_manifold_collect(ManifoldManifoldVec* all, ManifoldManifold* sol
     return true;
 }
 
-static R3D_ManifoldResult r3d_manifold_upload_components(R3D_Mesh* target, ManifoldManifold* first, ManifoldManifold* second)
+static R3D_ManifoldResult r3d_manifold_upload_components(R3D_Mesh* target, ManifoldManifold* first, ManifoldManifold* second, const Vector3* sliceNormal, float sliceOffset)
 {
     R3D_ManifoldResult result = {
         .status = R3D_MANIFOLD_INVALID_INPUT,
@@ -456,7 +555,7 @@ static R3D_ManifoldResult r3d_manifold_upload_components(R3D_Mesh* target, Manif
         goto cleanup;
     }
 
-    primaryData = r3d_manifold_convert_solid(primary);
+    primaryData = r3d_manifold_convert_solid(primary, sliceNormal, sliceOffset);
     manifold_delete_manifold(primary);
 
     if (!R3D_IsMeshDataValid(primaryData))
@@ -490,7 +589,7 @@ static R3D_ManifoldResult r3d_manifold_upload_components(R3D_Mesh* target, Manif
             goto cleanup;
         }
 
-        extraData[uploadedExtras] = r3d_manifold_convert_solid(component);
+        extraData[uploadedExtras] = r3d_manifold_convert_solid(component, sliceNormal, sliceOffset);
         manifold_delete_manifold(component);
 
         if (!R3D_IsMeshDataValid(extraData[uploadedExtras]))
@@ -633,7 +732,7 @@ static R3D_ManifoldResult r3d_manifold_boolean(R3D_Mesh* target, const R3D_Mesh*
         goto cleanup;
     }
 
-    result = r3d_manifold_upload_components(target, output, NULL);
+    result = r3d_manifold_upload_components(target, output, NULL, NULL, 0.0f);
 
 cleanup:
     if (output) manifold_delete_manifold(output);
@@ -716,7 +815,7 @@ R3D_ManifoldResult R3D_ManifoldExtrude(R3D_Mesh* mesh, const Vector2* outline, i
 
     if (solid)
     {
-        result = r3d_manifold_upload_components(mesh, solid, NULL);
+        result = r3d_manifold_upload_components(mesh, solid, NULL, NULL, 0.0f);
         manifold_delete_manifold(solid);
     }
     else
@@ -781,9 +880,7 @@ R3D_ManifoldResult R3D_ManifoldSlicePlane(R3D_Mesh* mesh, Vector3 normal, float 
             normal.x, normal.y, normal.z, offset
         );
 
-        result = r3d_manifold_upload_components(
-            mesh, halves.first, halves.second
-        );
+        result = r3d_manifold_upload_components(mesh, halves.first, halves.second, &normal, offset);
 
         if (halves.first) manifold_delete_manifold(halves.first);
         if (halves.second) manifold_delete_manifold(halves.second);
