@@ -20,6 +20,10 @@ extern "C" {
         float curveTolerance;
         float letterSpacing;
         float lineSpacing;
+
+        float bevelSmoothness;   // 0 = disabled, 0..1 = smoothing strength
+        int bevelSubdivisions;   // 2..4 when smoothing is enabled
+
         R3D_TextMeshAlign alignment;
     } R3D_TextMeshSettings;
 

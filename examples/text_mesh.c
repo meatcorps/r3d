@@ -14,6 +14,7 @@ int main(void)
 
     blockSettings.fontSize = 0.82f;
     blockSettings.depth = 0.32f;
+    blockSettings.bevelSmoothness = 0.0f;
     blockSettings.alignment = R3D_TEXT_MESH_ALIGN_RIGHT;
 
     R3D_TextMeshSettings roundedSettings = blockSettings;
@@ -21,6 +22,8 @@ int main(void)
     roundedSettings.curveTolerance = 0.0025f;
     roundedSettings.letterSpacing = 0.035f;
     roundedSettings.lineSpacing = 1.2f;
+    roundedSettings.bevelSmoothness = 0.12f;
+    roundedSettings.bevelSubdivisions = 2;
 
     const char* sampleText = "B8Oa@ 2026\nABC 012";
 
@@ -88,7 +91,7 @@ int main(void)
     );
 
     Camera3D camera = {
-        .position = {0.0f, 1.5f, 13.0f},
+        .position = {0.0f, 1.5f, 4.0f},
         .target = {0.0f, -0.2f, 0.0f},
         .up = {0.0f, 1.0f, 0.0f},
         .fovy = 50.0f,

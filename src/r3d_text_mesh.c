@@ -780,6 +780,49 @@ static bool r3d_text_append_line(
     return true;
 }
 
+static ManifoldManifold* r3d_text_smooth_bevel(
+    ManifoldManifold* solid,
+    float smoothness,
+    int subdivisions)
+{
+    ManifoldManifold* smoothed = manifold_smooth_out(
+        manifold_alloc_manifold(),
+        solid,
+        52.5,
+        (double)smoothness
+    );
+
+    if (!smoothed)
+        return NULL;
+
+    if (manifold_status(smoothed) != MANIFOLD_NO_ERROR ||
+        manifold_is_empty(smoothed))
+    {
+        manifold_delete_manifold(smoothed);
+        return NULL;
+    }
+
+    ManifoldManifold* refined = manifold_refine(
+        manifold_alloc_manifold(),
+        smoothed,
+        subdivisions
+    );
+
+    manifold_delete_manifold(smoothed);
+
+    if (!refined)
+        return NULL;
+
+    if (manifold_status(refined) != MANIFOLD_NO_ERROR ||
+        manifold_is_empty(refined))
+    {
+        manifold_delete_manifold(refined);
+        return NULL;
+    }
+
+    return refined;
+}
+
 R3D_TextMeshSettings R3D_DefaultTextMeshSettings(void)
 {
     return (R3D_TextMeshSettings){
@@ -788,6 +831,8 @@ R3D_TextMeshSettings R3D_DefaultTextMeshSettings(void)
         .curveTolerance = 0.005f,
         .letterSpacing = 0.0f,
         .lineSpacing = 1.0f,
+        .bevelSmoothness = 0.0f,
+        .bevelSubdivisions = 2,
         .alignment = R3D_TEXT_MESH_ALIGN_LEFT
     };
 }
@@ -804,6 +849,12 @@ R3D_MeshData R3D_GenMeshDataText(
         !isfinite(settings.depth) || settings.depth <= 0.0f ||
         !isfinite(settings.curveTolerance) ||
         settings.curveTolerance <= 0.0f ||
+        !isfinite(settings.bevelSmoothness) ||
+        settings.bevelSmoothness < 0.0f ||
+        settings.bevelSmoothness > 1.0f ||
+        (settings.bevelSmoothness > 0.0f &&
+            (settings.bevelSubdivisions < 2 ||
+             settings.bevelSubdivisions > 4)) ||
         !isfinite(settings.letterSpacing) ||
         !isfinite(settings.lineSpacing) ||
         settings.lineSpacing <= 0.0f ||
@@ -937,38 +988,59 @@ R3D_MeshData R3D_GenMeshDataText(
                                 MANIFOLD_NO_ERROR &&
                             !manifold_is_empty(solid))
                         {
-                            ManifoldManifold* normalSolid =
-                                manifold_calculate_normals(
-                                    manifold_alloc_manifold(),
+                            ManifoldManifold* roundedSolid = NULL;
+                            ManifoldManifold* geometry = solid;
+
+                            if (settings.bevelSmoothness > 0.0f)
+                            {
+                                roundedSolid = r3d_text_smooth_bevel(
                                     solid,
-                                    0,
-                                    45.0
+                                    settings.bevelSmoothness,
+                                    settings.bevelSubdivisions
                                 );
 
-                            if (normalSolid)
-                            {
-                                if (manifold_status(normalSolid) ==
-                                    MANIFOLD_NO_ERROR)
-                                {
-                                    ManifoldMeshGL* output =
-                                        manifold_get_meshgl(
-                                            manifold_alloc_meshgl(),
-                                            normalSolid
-                                        );
+                                // A failed requested bevel is a generation failure,
+                                // rather than silently returning the unmodified geometry.
+                                geometry = roundedSolid;
+                            }
 
-                                    if (output)
+                            if (geometry)
+                            {
+                                ManifoldManifold* normalSolid =
+                                    manifold_calculate_normals(
+                                        manifold_alloc_manifold(),
+                                        geometry,
+                                        0,
+                                        45.0
+                                    );
+
+                                if (normalSolid)
+                                {
+                                    if (manifold_status(normalSolid) ==
+                                        MANIFOLD_NO_ERROR)
                                     {
-                                        result =
-                                            R3D_ManifoldMeshGLToMeshData(
+                                        ManifoldMeshGL* output =
+                                            manifold_get_meshgl(
+                                                manifold_alloc_meshgl(),
+                                                normalSolid
+                                            );
+
+                                        if (output)
+                                        {
+                                            result = R3D_ManifoldMeshGLToMeshData(
                                                 output
                                             );
 
-                                        manifold_delete_meshgl(output);
+                                            manifold_delete_meshgl(output);
+                                        }
                                     }
-                                }
 
-                                manifold_delete_manifold(normalSolid);
+                                    manifold_delete_manifold(normalSolid);
+                                }
                             }
+
+                            if (roundedSolid)
+                                manifold_delete_manifold(roundedSolid);
                         }
 
                         manifold_delete_manifold(solid);
