@@ -66,6 +66,7 @@ typedef struct R3D_Mesh {
     R3D_PrimitiveType primitiveType;        ///< Type of primitive that constitutes the vertices.
     R3D_Layer layerMask;                    ///< Bitfield indicating the rendering layer(s) of this mesh.
     BoundingBox aabb;                       ///< Axis-Aligned Bounding Box in local space.
+    R3D_MeshData* meshData;                 ///< Optional non-owning CPU data link (NULL by default).
 
 } R3D_Mesh;
 
@@ -279,6 +280,13 @@ R3DAPI R3D_Mesh R3D_GenMeshCubicmap(Image cubicmap, Vector3 cubeSize);
  * @return Returns true if the update is successful, false otherwise.
  */
 R3DAPI bool R3D_UpdateMesh(R3D_Mesh* mesh, R3D_MeshData data, const BoundingBox* aabb);
+
+// Link CPU geometry to an existing GPU mesh.
+// The caller retains ownership of the data and its memory.
+R3DAPI bool R3D_LinkMeshData(R3D_Mesh* mesh, R3D_MeshData* data);
+
+// Remove the CPU link without freeing any geometry.
+R3DAPI void R3D_UnlinkMeshData(R3D_Mesh* mesh);
 
 #ifdef __cplusplus
 } // extern "C"

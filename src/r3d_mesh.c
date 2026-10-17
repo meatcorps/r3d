@@ -393,3 +393,23 @@ bool R3D_UpdateMesh(R3D_Mesh* mesh, R3D_MeshData data, const BoundingBox* aabb)
 
     return true;
 }
+
+bool R3D_LinkMeshData(R3D_Mesh* mesh, R3D_MeshData* data)
+{
+    if (!mesh || !data || !R3D_IsMeshValid(*mesh) ||
+        !R3D_IsMeshDataValid(*data) ||
+        mesh->vertexCount != data->vertexCount ||
+        mesh->indexCount != data->indexCount ||
+        (data->indexCount > 0 && !data->indices))
+    {
+        return false;
+    }
+
+    mesh->meshData = data;
+    return true;
+}
+
+void R3D_UnlinkMeshData(R3D_Mesh* mesh)
+{
+    if (mesh) mesh->meshData = NULL;
+}

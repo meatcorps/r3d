@@ -615,14 +615,20 @@ static bool load_mesh_internal(
     {
         R3D_UnloadMeshData(data);
         return false;
-    }
-
+    }\
     // Upload the mesh
     R3D_PrimitiveType ptype = get_primitive_type(aiMesh->mPrimitiveTypes);
     *outMesh = R3D_LoadMesh(ptype, data, &aabb);
 
-    if (outMeshData != NULL) *outMeshData = data;
-    else R3D_UnloadMeshData(data);
+    if (outMeshData != NULL)
+    {
+        *outMeshData = data;
+        R3D_LinkMeshData(outMesh, outMeshData);
+    }
+    else
+    {
+        R3D_UnloadMeshData(data);
+    }
 
     if (outMeshName != NULL && aiMesh->mName.length > 0)
     {
