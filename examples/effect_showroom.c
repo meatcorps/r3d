@@ -22,8 +22,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "r3d/r3d_texture.h"
-
 #ifndef RESOURCES_PATH
 #define RESOURCES_PATH "./"
 #endif

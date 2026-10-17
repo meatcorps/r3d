@@ -57,6 +57,7 @@
 #include "r3d_render_mode_builder.h"
 #include "r3d_geometry_deformation.h"
 #include "r3d_texture_surface.h"
+#include "r3d_texture.h"
 #include "r3d_utils.h"
 
 #endif // R3D_H

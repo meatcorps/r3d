@@ -8,10 +8,7 @@
  */
 
 #include <r3d/r3d.h>
-#include <r3d/r3d_texture_surface.h>
 #include <raymath.h>
-
-#include "r3d/r3d_texture.h"
 
 #define VIEW_W 1280
 #define VIEW_H 720
