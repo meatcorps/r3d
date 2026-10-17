@@ -140,4 +140,26 @@ if(R3D_SUPPORT_MANIFOLD)
     set_tests_properties(manifold_text_mesh PROPERTIES
             LABELS "manifold;text;headless"
     )
+
+    # Standalone CPU benchmark.
+    # Not registered with CTest: benchmarking should be
+    # explicitly requested, not part of ordinary CI.
+    add_executable(
+            r3d_benchmark_text_mesh
+            text_mesh_benchmark.c
+    )
+
+    target_link_libraries(r3d_benchmark_text_mesh PRIVATE
+            r3d
+            raylib
+            manifold::manifoldc
+    )
+
+    target_include_directories(r3d_benchmark_text_mesh PRIVATE
+            "${R3D_ROOT_PATH}/include"
+    )
+
+    target_compile_definitions(r3d_benchmark_text_mesh PRIVATE
+            RESOURCES_PATH="${R3D_ROOT_PATH}/examples/resources/"
+    )
 endif()

@@ -88,6 +88,8 @@ if(R3D_SUPPORT_MANIFOLD)
     target_link_libraries(r3d_manifold_operations PRIVATE manifold::manifoldc)
 
     add_example(r3d_text_mesh "examples/text_mesh.c")
+
+    add_example(r3d_procedural_showroom "examples/procedural_showroom.c")
 endif()
 
 # Special include cases
