@@ -1011,7 +1011,7 @@ R3D_MeshData R3D_GenMeshDataText(
                                         manifold_alloc_manifold(),
                                         geometry,
                                         0,
-                                        45.0
+                                        settings.bevelSmoothness > 0.0f ? 180.0 : 45.0
                                     );
 
                                 if (normalSolid)

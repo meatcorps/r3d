@@ -22,7 +22,7 @@ int main(void)
     roundedSettings.curveTolerance = 0.0025f;
     roundedSettings.letterSpacing = 0.035f;
     roundedSettings.lineSpacing = 1.2f;
-    roundedSettings.bevelSmoothness = 0.12f;
+    roundedSettings.bevelSmoothness = 0.8f;
     roundedSettings.bevelSubdivisions = 2;
 
     const char* sampleText = "B8Oa@ 2026\nABC 012";
