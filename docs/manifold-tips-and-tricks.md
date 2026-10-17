@@ -1,274 +1,316 @@
-# Manifold in R3D — Tips & Tricks
+# Manifold + R3D — Native Geometry Cookbook
 
-Practical recipes for runtime Boolean modeling, slicing and custom geometry operations using **R3D + Manifold's C API**.
+The one-line R3D Boolean methods already do the obvious stuff. This guide focuses on **Manifold's native C API** when you want custom cap materials, intricate cutters, multiple operations with a single GPU upload, or procedural mesh deformation.
 
-This guide covers the optional integration on the `meatcorps/raylib6` branch. It assumes C, raylib 6 and `R3D_SUPPORT_MANIFOLD=ON`. For working visual examples, see [`examples/manifold_operations.c`](../examples/manifold_operations.c) and [`examples/manifold.c`](../examples/manifold.c).
+Applicable with CMAKE optional `R3D_SUPPORT_MANIFOLD=ON` and Manifold 3.5.2. These are recipes, not an additional mesh abstraction.
 
-## Build and include
-
-~~~sh
-git submodule update --init --recursive
-cmake -S . -B build -DR3D_RAYLIB_VENDORED=ON -DR3D_ASSIMP_VENDORED=ON -DR3D_SUPPORT_MANIFOLD=ON
-cmake --build build --target r3d_manifold_operations
-~~~
-
-~~~c
+```c
 #include <r3d/r3d.h>
 #include <r3d/r3d_manifold.h>
-~~~
+#include <r3d/r3d_vertex.h>
+#include <raymath.h>
+#include <math.h>
+#include <string.h>
+```
 
-Manifold is **opt-in**. Normal R3D mesh uploads and drawing do not run Boolean code. The Manifold headers/API are available only in builds that enable the integration.
+## 1. Custom cut: brick outside, concrete inside
 
-## Pick the right workflow
+R3D uses one material per mesh draw call. **Changing cap UVs alone cannot assign a second texture.** Let Manifold create the capped geometry, then split triangles into *exterior* and *cut surface* mesh data. Draw each with its own material, using the same transform.
 
-| You want to… | Use |
-| --- | --- |
-| Subtract / union / intersect two existing editable meshes | `R3D_ManifoldSubtract` / `Union` / `Intersect` |
-| Cut a mesh into pieces with ready-to-render caps | `R3D_ManifoldSlicePlane` |
-| Extrude a simple XY outline | `R3D_ManifoldExtrude` |
-| Create a complex cutter, apply ten cuts, then upload once | Manifold's C API + `R3D_UpdateMeshFromManifold` |
-| Control sophisticated UVs, materials, smoothing or topology | Explicit MeshData ↔ Manifold conversion and custom processing |
+This example classifies triangles whose **three vertices lie on the slice plane**. That's robust for an interior planar cut, though if an original face was already coplanar with the plane, that face also qualifies. For those special cases, track face provenance instead.
 
-**Rule of thumb:** convenience functions do **one operation and one GPU update**. Native Manifold chaining keeps intermediate geometry off the GPU until you're done.
-
-## Link CPU geometry once
-
-Boolean convenience functions take two `R3D_Mesh` objects, not separate mesh-data arguments. They read CPU geometry through the optional, **non-owning** `mesh.meshData` pointer.
-
-~~~c
-R3D_MeshData wallData = R3D_GenMeshDataCube(3.0f, 2.0f, 0.4f);
-R3D_MeshData toolData = R3D_GenMeshDataCube(0.8f, 0.8f, 0.8f);
-
-R3D_Mesh wall = R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, wallData, NULL);
-R3D_Mesh tool = R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, toolData, NULL);
-
-R3D_LinkMeshData(&wall, &wallData);
-R3D_LinkMeshData(&tool, &toolData);
-
-// ...operations...
-
-R3D_UnloadMesh(wall);
-R3D_UnloadMesh(tool);
-R3D_UnloadMeshData(wallData);
-R3D_UnloadMeshData(toolData);
-~~~
-
-The link costs only a pointer; retaining CPU vertex/index buffers still costs RAM. `R3D_UnloadMesh()` does **not** free linked `R3D_MeshData`. Keep the linked data structure and its buffers alive until editing is finished; call `R3D_UnlinkMeshData(&wall)` if you want to free CPU data while keeping the GPU mesh.
-
-**Don't copy an editable `R3D_Mesh` and assume you made an independent mesh.** Copying the struct also copies its GPU handles and CPU-data pointer, not its resources.
-
-### Editing imported GLB models
-
-~~~c
-R3D_Model model = R3D_LoadModelEx("wall.glb", R3D_IMPORT_RETAIN_MESH_DATA);
-
-// Retained model meshes are already linked to their model.meshData entries.
-if (model.meshCount >= 2 && model.meshData)
+```c
+// Outputs are ordinary GPU meshes, no persistent wrapper type.
+static bool BuildCutMaterials(ManifoldManifold* half, Vector3 planeNormal, float offset, float tilesPerUnit, R3D_Mesh* outsideMesh, R3D_Mesh* capMesh)
 {
-    R3D_ManifoldResult result = R3D_ManifoldSubtract(&model.meshes[0], &model.meshes[1]);
-    // Inspect result.status and use result.extraMeshes if needed.
-    R3D_UnloadManifoldResult(&result);
-}
+    if (!half || !outsideMesh || !capMesh || tilesPerUnit <= 0) return false;
+    *outsideMesh = (R3D_Mesh){0};
+    *capMesh = (R3D_Mesh){0};
+    bool ok = false;
+    ManifoldManifold* normals = NULL;
+    ManifoldMeshGL* gl = NULL;
+    R3D_MeshData raw = {0}, shell = {0}, cap = {0};
 
-// ...after all edits and rendering...
-R3D_UnloadModel(model, true);
-~~~
+    normals = manifold_calculate_normals(manifold_alloc_manifold(), half, 0, 52.5);
+    if (!normals || manifold_status(normals) != MANIFOLD_NO_ERROR) goto cleanup;
+    gl = manifold_get_meshgl(manifold_alloc_meshgl(), normals);
+    if (!gl) goto cleanup;
+    raw = R3D_ManifoldMeshGLToMeshData(gl);
+    if (!raw.vertices || !raw.indices || raw.indexCount % 3) goto cleanup;
 
-For lookup by mesh name, also pass `R3D_IMPORT_RETAIN_MESH_NAMES` and use `R3D_GetModelMesh()`. With no retain-data flag, a GPU-only imported mesh has no editable CPU geometry; reimporting with the flag is easier than implementing GPU readback.
+    shell = R3D_LoadMeshData(raw.vertexCount, raw.indexCount);
+    cap = R3D_LoadMeshData(raw.vertexCount, raw.indexCount);
+    if (!shell.vertices || !shell.indices || !cap.vertices || !cap.indices) goto cleanup;
+    memcpy(shell.vertices, raw.vertices, raw.vertexCount * sizeof(R3D_Vertex));
+    memcpy(cap.vertices, raw.vertices, raw.vertexCount * sizeof(R3D_Vertex));
+    shell.vertexCount = cap.vertexCount = raw.vertexCount;
 
-Imported files can contain open surfaces, multiple submeshes and transforms. Manifold expects valid, consistently wound, closed solids for reliable 3D Boolean operations. The operation uses **mesh-local geometry**: a transform supplied only to `R3D_DrawMesh()` does not move the Boolean cutter. Transform the CPU geometry or the native Manifold cutter instead.
+    planeNormal = Vector3Normalize(planeNormal);
+    Vector3 reference = fabsf(planeNormal.y) < 0.9f ? (Vector3){0, 1, 0} : (Vector3){0, 0, 1};
+    Vector3 axisU = Vector3Normalize(Vector3CrossProduct(reference, planeNormal));
+    Vector3 axisV = Vector3CrossProduct(planeNormal, axisU);
+    BoundingBox bbox = R3D_CalculateMeshDataBoundingBox(raw);
+    Vector3 extent = Vector3Subtract(bbox.max, bbox.min);
+    float eps = 0.0001f * fmaxf(1.0f, fmaxf(extent.x, fmaxf(extent.y, extent.z)));
 
-## One-line operations, including chaining
-
-~~~c
-R3D_ManifoldResult cut = R3D_ManifoldSubtract(&wall, &tool);
-
-if (cut.status == R3D_MANIFOLD_OK)
-{
-    // wall's GPU geometry and linked wallData now contain the result.
-    // cut.extraMeshes contains other disconnected components, if any.
-}
-
-R3D_UnloadManifoldResult(&cut);
-~~~
-
-Use `R3D_ManifoldUnion(&wall, &tool)` to add volume, or `R3D_ManifoldIntersect(&wall, &tool)` to keep only the overlap.
-
-For another cut, call the convenience function again. It reads the **updated** linked `wallData`. You do not need to re-link the mesh.
-
-~~~c
-R3D_ManifoldResult first = R3D_ManifoldSubtract(&wall, &tool);
-if (first.status == R3D_MANIFOLD_OK)
-{
-    // If the detached pieces are not needed, release them before the next edit.
-    R3D_UnloadManifoldResult(&first);
-
-    R3D_ManifoldResult second = R3D_ManifoldSubtract(&wall, &anotherTool);
-    R3D_UnloadManifoldResult(&second);
-}
-else
-{
-    R3D_UnloadManifoldResult(&first);
-}
-~~~
-
-This is convenient for occasional edits and editor actions. For many repeated cuts (e.g. generating destruction in one event), use the **native chain** below to avoid repeatedly converting and uploading.
-
-## Slice a wall and keep the detached pieces
-
-~~~c
-// Plane through local Y=0; the first piece is on the normal-facing side.
-R3D_ManifoldResult pieces = R3D_ManifoldSlicePlane(
-    &wall, (Vector3){0.0f, 1.0f, 0.0f}, 0.0f
-);
-
-if (pieces.status == R3D_MANIFOLD_OK)
-{
-    // wall now holds the primary piece.
-    for (int i = 0; i < pieces.extraCount; i++)
+    for (int i = 0; i < raw.indexCount; i += 3)
     {
-        // Draw pieces.extraMeshes[i] with your material in an R3D render pass,
-        // or give each piece its own transform/physics body.
+        uint32_t ids[3] = {raw.indices[i], raw.indices[i + 1], raw.indices[i + 2]};
+        bool isCap = true;
+        for (int j = 0; j < 3; j++)
+        {
+            Vector3 p = raw.vertices[ids[j]].position;
+            if (fabsf(Vector3DotProduct(p, planeNormal) - offset) > eps) isCap = false;
+        }
+
+        R3D_MeshData* destination = isCap ? &cap : &shell;
+        for (int j = 0; j < 3; j++) destination->indices[destination->indexCount++] = ids[j];
+        if (isCap)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                R3D_Vertex* vertex = &cap.vertices[ids[j]];
+                Vector2 uv = {
+                    tilesPerUnit * Vector3DotProduct(vertex->position, axisU),
+                    tilesPerUnit * Vector3DotProduct(vertex->position, axisV)
+                };
+                R3D_PackTexCoord(vertex->texcoord, uv);
+                vertex->color = WHITE;  // Essential: cutter faces may inherit alpha=0.
+            }
+        }
     }
-}
 
-// Do not unload while you still use pieces.extraMeshes.
-R3D_UnloadManifoldResult(&pieces);
-~~~
-
-`extraCount` excludes the primary mesh, and `extraMeshes`/`extraData` belong to the **result**, not the caller. Extra meshes have CPU links and may be edited again while the parent result lives. Do not individually unload them and then also unload the result.
-
-For a straight plane split, Manifold supplies sealed caps. R3D applies basic planar UVs and opaque white vertex color to the exposed faces, so the existing material (such as a checkerboard or concrete texture) is immediately visible. Custom interior materials, triplanar mapping and fracture textures are application-specific.
-
-A **thick cut** is different from a plane slice: subtract a cutter that passes right through the wall. The subtraction result can contain several disconnected solids, available as `extraMeshes`.
-
-**Note:** piece ordering and the number of components are not a stable volume-based ranking. Use your own selection rule if gameplay depends on piece size or which side is retained.
-
-## Extrude a simple outline
-
-~~~c
-Vector2 outline[] = {
-    {-1.0f, -1.0f},
-    { 1.0f, -1.0f},
-    { 1.0f,  0.0f},
-    { 0.0f,  0.0f},
-    { 0.0f,  1.0f},
-    {-1.0f,  1.0f}
-};
-
-R3D_Mesh shape = {0};
-R3D_ManifoldResult result = R3D_ManifoldExtrude(&shape, outline, 6, 0.5f);
-
-if (result.status == R3D_MANIFOLD_OK)
-{
-    // shape is now a regular GPU R3D mesh.
-}
-
-R3D_UnloadManifoldResult(&result);
-if (R3D_IsMeshValid(shape)) R3D_UnloadMesh(shape);
-~~~
-
-The shortcut handles a **simple polygon in XY**, extruded along +Z. A new, zero-initialized GPU target does **not** automatically retain CPU data; repeated convenience Booleans require an existing CPU-data link. For extrusions with holes, twisting, custom profiles or multiple chained edits, prefer native Manifold cross sections/extrusion and explicitly manage the final CPU mesh.
-
-## Native workflow: two cuts, one upload
-
-This is the preferred path when you want many operations without repeated R3D ↔ Manifold conversions. It uses the **same existing R3D mesh types**—no persistent wrapper.
-
-~~~c
-static bool CutTwiceNative(R3D_Mesh* wall, const R3D_Mesh* cutter)
-{
-    if (!wall || !cutter || !wall->meshData || !cutter->meshData) return false;
-
-    bool success = false;
-    ManifoldMeshGL* wallGL = R3D_MeshDataToManifoldMeshGL(wall->meshData);
-    ManifoldMeshGL* cutterGL = R3D_MeshDataToManifoldMeshGL(cutter->meshData);
-    ManifoldManifold* base = NULL;
-    ManifoldManifold* tool = NULL;
-    ManifoldManifold* movedA = NULL;
-    ManifoldManifold* movedB = NULL;
-    ManifoldManifold* stepA = NULL;
-    ManifoldManifold* stepB = NULL;
-
-    if (!wallGL || !cutterGL) goto cleanup;
-
-    base = manifold_of_meshgl(manifold_alloc_manifold(), wallGL);
-    tool = manifold_of_meshgl(manifold_alloc_manifold(), cutterGL);
-    if (!base || !tool || manifold_status(base) != MANIFOLD_NO_ERROR ||
-        manifold_status(tool) != MANIFOLD_NO_ERROR) goto cleanup;
-
-    movedA = manifold_translate(manifold_alloc_manifold(), tool, 0.5, 0.0, 0.0);
-    movedB = manifold_translate(manifold_alloc_manifold(), tool, -0.5, 0.0, 0.0);
-    if (!movedA || !movedB) goto cleanup;
-
-    stepA = manifold_difference(manifold_alloc_manifold(), base, movedA);
-    if (!stepA || manifold_status(stepA) != MANIFOLD_NO_ERROR) goto cleanup;
-
-    stepB = manifold_difference(manifold_alloc_manifold(), stepA, movedB);
-    if (!stepB || manifold_status(stepB) != MANIFOLD_NO_ERROR ||
-        manifold_is_empty(stepB)) goto cleanup;
-
-    // Converts, uploads, updates linked CPU data and releases temporary R3D data.
-    success = R3D_UpdateMeshFromManifold(wall, stepB);
+    if (!shell.indexCount || !cap.indexCount) goto cleanup;
+    R3D_GenMeshDataTangents(&cap, R3D_PRIMITIVE_TRIANGLES);
+    *outsideMesh = R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, shell, NULL);
+    *capMesh = R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, cap, NULL);
+    ok = R3D_IsMeshValid(*outsideMesh) && R3D_IsMeshValid(*capMesh);
 
 cleanup:
-    if (stepB) manifold_delete_manifold(stepB);
-    if (stepA) manifold_delete_manifold(stepA);
-    if (movedB) manifold_delete_manifold(movedB);
-    if (movedA) manifold_delete_manifold(movedA);
-    if (tool) manifold_delete_manifold(tool);
-    if (base) manifold_delete_manifold(base);
-    if (cutterGL) manifold_delete_meshgl(cutterGL);
-    if (wallGL) manifold_delete_meshgl(wallGL);
-    return success;
+    if (!ok)
+    {
+        if (R3D_IsMeshValid(*outsideMesh)) R3D_UnloadMesh(*outsideMesh);
+        if (R3D_IsMeshValid(*capMesh)) R3D_UnloadMesh(*capMesh);
+        *outsideMesh = (R3D_Mesh){0};
+        *capMesh = (R3D_Mesh){0};
+    }
+    R3D_UnloadMeshData(cap);
+    R3D_UnloadMeshData(shell);
+    R3D_UnloadMeshData(raw);
+    if (gl) manifold_delete_meshgl(gl);
+    if (normals) manifold_delete_manifold(normals);
+    return ok;
 }
-~~~
+```
 
-Other useful native combinations:
+Using the helper with a native plane split:
 
-- **Compound cutter:** `manifold_union(cutterA, cutterB)`, then `manifold_difference(wall, combinedCutter)`.
-- **Angled / translated cutter:** `manifold_rotate`, `manifold_scale` and `manifold_translate` before subtracting.
-- **Keep overlapping volume:** `manifold_intersection`.
-- **Plane cut retaining both halves:** `manifold_split_by_plane`.
-- **Break a result into individual connected solids:** `manifold_decompose`.
+```c
+R3D_MeshData sourceData = R3D_GenMeshDataCube(3, 2, 0.5f);
+ManifoldMeshGL* sourceGL = R3D_MeshDataToManifoldMeshGL(&sourceData);
+ManifoldManifold* solid = sourceGL ? manifold_of_meshgl(manifold_alloc_manifold(), sourceGL) : NULL;
+R3D_Mesh topShell = {0}, topInterior = {0}, bottomShell = {0}, bottomInterior = {0};
 
-Each returned Manifold object is caller-owned. Free it with the corresponding `manifold_delete_*` function. The native `R3D_UpdateMeshFromManifold()` uploads one resulting solid as one R3D mesh, even if that solid contains disconnected components; if you need separate R3D meshes, decompose first or use the convenience operations.
+if (solid && manifold_status(solid) == MANIFOLD_NO_ERROR)
+{
+    ManifoldManifoldPair halves = manifold_split_by_plane(manifold_alloc_manifold(), manifold_alloc_manifold(), solid, 0, 1, 0, 0);
+    if (halves.first && manifold_status(halves.first) == MANIFOLD_NO_ERROR)
+        BuildCutMaterials(halves.first, (Vector3){0, 1, 0}, 0, 2.0f, &topShell, &topInterior);
+    if (halves.second && manifold_status(halves.second) == MANIFOLD_NO_ERROR)
+        BuildCutMaterials(halves.second, (Vector3){0, 1, 0}, 0, 2.0f, &bottomShell, &bottomInterior);
+    if (halves.first) manifold_delete_manifold(halves.first);
+    if (halves.second) manifold_delete_manifold(halves.second);
+}
+if (solid) manifold_delete_manifold(solid);
+if (sourceGL) manifold_delete_meshgl(sourceGL);
+R3D_UnloadMeshData(sourceData);
+```
 
-## Rendering, UVs and materials
+During your existing R3D render pass:
 
-Manifold handles **geometry**. R3D handles mesh packing, texture coordinates, tangents and rendering. The convenience slice gives newly exposed planar faces basic UVs and opaque colors, preserving the original material. It is not an automatic UV unwrap for every kind of Boolean-generated face.
+```c
+// Both meshes belonging to one half MUST use the same transform.
+if (R3D_IsMeshValid(topShell)) R3D_DrawMesh(topShell, brickMaterial, (Vector3){0, 0.2f, 0}, 1);
+if (R3D_IsMeshValid(topInterior)) R3D_DrawMesh(topInterior, cementMaterial, (Vector3){0, 0.2f, 0}, 1);
+if (R3D_IsMeshValid(bottomShell)) R3D_DrawMesh(bottomShell, brickMaterial, (Vector3){0, -0.2f, 0}, 1);
+if (R3D_IsMeshValid(bottomInterior)) R3D_DrawMesh(bottomInterior, cementMaterial, (Vector3){0, -0.2f, 0}, 1);
+```
 
-Tips for destruction effects:
+When the scene is destroyed, call `R3D_UnloadMesh()` on each valid result. No extra CPU-data buffers are retained after uploading. This separation duplicates the vertex array; it is deliberately straightforward rather than memory-optimal.
 
-- Prepare a closed, triangulated wall mesh; use several closed cutters for impacts, holes or cracks.
-- Use the same R3D material on each piece for a quick result. For exposed brick/concrete aggregate or different interior materials, apply your own mapping/material workflow.
-- For animated chunks, use an individual transform per returned `R3D_Mesh`; geometry operations themselves do not create physics bodies.
-- Perform geometry edits at **events**, not every render frame. Repeated conversions, normal/tangent generation and buffer reallocations cost CPU/GPU time.
+For an animated chunk, treat its *shell* and *interior* meshes as two render layers of **one** rigid body or transform. Manifold computes geometry, not physical objects.
 
-## Troubleshooting and ownership checklist
+## 2. A wall drilled by 15 cutters, one GPU upload
 
-| Symptom | Check |
+Instead of 15 convenience subtractions (and 15 R3D reuploads), generate a compound Manifold cutter, subtract once, upload once.
+
+```c
+static R3D_Mesh MakePerforatedWall(void)
+{
+    R3D_Mesh result = {0};
+    ManifoldManifold* wall = manifold_cube(manifold_alloc_manifold(), 4, 2, 0.35, 1);
+    ManifoldManifold* drill = manifold_cylinder(manifold_alloc_manifold(), 1.0, 0.20, 0.20, 24, 1);
+    ManifoldManifoldVec* cutters = manifold_manifold_empty_vec(manifold_alloc_manifold_vec());
+    ManifoldManifold* combined = NULL;
+    ManifoldManifold* cut = NULL;
+    if (!wall || !drill || !cutters) goto cleanup;
+
+    for (int x = -2; x <= 2; x++)
+    for (int y = -1; y <= 1; y++)
+    {
+        ManifoldManifold* moved = manifold_translate(manifold_alloc_manifold(), drill, 0.65*x, 0.55*y, 0);
+        if (!moved) goto cleanup;
+        manifold_manifold_vec_push_back(cutters, moved);
+        manifold_delete_manifold(moved);
+    }
+
+    combined = manifold_batch_boolean(manifold_alloc_manifold(), cutters, MANIFOLD_ADD);
+    if (!combined || manifold_status(combined) != MANIFOLD_NO_ERROR) goto cleanup;
+    cut = manifold_difference(manifold_alloc_manifold(), wall, combined);
+    if (cut && manifold_status(cut) == MANIFOLD_NO_ERROR && !manifold_is_empty(cut))
+        R3D_UpdateMeshFromManifold(&result, cut);
+
+cleanup:
+    if (cut) manifold_delete_manifold(cut);
+    if (combined) manifold_delete_manifold(combined);
+    if (cutters) manifold_delete_manifold_vec(cutters);
+    if (drill) manifold_delete_manifold(drill);
+    if (wall) manifold_delete_manifold(wall);
+    return result;
+}
+```
+
+`manifold_cylinder()` is oriented along Z, convenient for this Z-thin wall. `R3D_UpdateMeshFromManifold()` handles conversion and upload into the zero-initialized GPU mesh. Native primitives normally do not include custom artist UVs: plan your UV processing accordingly. Run this at an event or at scene load—not every frame.
+
+Variations: union rotated boxes for jagged breaches; use `manifold_sphere()` for craters; use `manifold_intersection()` for clipped sculpture pieces. Keep intermediate solids native until the last step.
+
+## 3. Refine + warp = bent or melted geometry
+
+Manifold provides higher-level mesh transformations beyond subtract/union. Refine geometry first; then bend it with a callback.
+
+```c
+static ManifoldVec3 BendWarp(double x, double y, double z, void* user)
+{
+    const double strength = *(const double*)user;
+    return (ManifoldVec3){x, y + strength * sin(x * 5.0 + z), z};
+}
+
+static R3D_Mesh CreateBentMetal(void)
+{
+    R3D_Mesh gpu = {0};
+    double strength = 0.18;
+    ManifoldManifold* box = manifold_cube(manifold_alloc_manifold(), 3, 2, 0.4, 1);
+    ManifoldManifold* refined = box ? manifold_refine_to_length(manifold_alloc_manifold(), box, 0.18) : NULL;
+    ManifoldManifold* warped = refined ? manifold_warp(manifold_alloc_manifold(), refined, BendWarp, &strength) : NULL;
+    if (warped && manifold_status(warped) == MANIFOLD_NO_ERROR && !manifold_is_empty(warped))
+        R3D_UpdateMeshFromManifold(&gpu, warped);
+    if (warped) manifold_delete_manifold(warped);
+    if (refined) manifold_delete_manifold(refined);
+    if (box) manifold_delete_manifold(box);
+    return gpu;
+}
+```
+
+Watch for stretched UVs or self-intersections with aggressive warps. For physically broken panels, add a native Boolean cut *after* the warp. This is CPU modeling, not a GPU shader.
+
+## 4. Native operation → custom R3D vertex processing → upload
+
+Use this whenever Manifold's topology is right but you want artistic control of UVs, color/alpha, roughness masks, or deliberately nonstandard surface mapping.
+
+```c
+// 'finished' is an existing valid ManifoldManifold* from native operations.
+ManifoldManifold* normalSolid = manifold_calculate_normals(manifold_alloc_manifold(), finished, 0, 52.5);
+ManifoldMeshGL* gl = normalSolid ? manifold_get_meshgl(manifold_alloc_meshgl(), normalSolid) : NULL;
+R3D_MeshData data = gl ? R3D_ManifoldMeshGLToMeshData(gl) : (R3D_MeshData){0};
+
+if (R3D_IsMeshDataValid(data))
+{
+    for (int i = 0; i < data.vertexCount; i++) data.vertices[i].color = WHITE;
+    R3D_GenMeshDataUVsPlanar(&data, (Vector2){1,1}, (Vector3){0,0,1});
+    R3D_GenMeshDataTangents(&data, R3D_PRIMITIVE_TRIANGLES);
+}
+
+R3D_Mesh gpu = R3D_IsMeshDataValid(data) ? R3D_LoadMesh(R3D_PRIMITIVE_TRIANGLES, data, NULL) : (R3D_Mesh){0};
+R3D_UnloadMeshData(data);
+if (gl) manifold_delete_meshgl(gl);
+if (normalSolid) manifold_delete_manifold(normalSolid);
+```
+
+That example remaps *all* UVs. For an imported textured mesh, you probably only want to change the new cut triangles (Recipe 1), not your original carefully authored UVs.
+
+**Important:** `R3D_UpdateMesh()` only uploads GPU geometry; it does not replace an existing linked `mesh.meshData`. If you want subsequent convenience operations, synchronize your caller-owned CPU data:
+
+```c
+// `wall` already linked to `wallData` with R3D_LinkMeshData(&wall, &wallData).
+if (R3D_IsMeshDataValid(data) && R3D_UpdateMesh(&wall, data, NULL))
+{
+    R3D_UnloadMeshData(wallData);
+    wallData = data;             // &wallData pointer remains stable.
+    data = (R3D_MeshData){0};    // Ownership transferred.
+}
+R3D_UnloadMeshData(data);
+```
+
+If you don't need to modify attributes, just call `R3D_UpdateMeshFromManifold(&wall, finished)`: it also updates the linked CPU data.
+
+## 5. Multiple independently moving fragments
+
+When you need more than the primary result, the native path is:
+
+`manifold_split_by_plane()` or `manifold_difference()` → `manifold_decompose()` → `manifold_manifold_vec_get()` → per-part export/upload.
+
+```c
+// Assume a valid ManifoldManifold* broken from your previous operations.
+ManifoldManifoldVec* components = manifold_decompose(manifold_alloc_manifold_vec(), broken);
+if (components)
+{
+    size_t count = manifold_manifold_vec_length(components);
+    for (size_t i = 0; i < count; i++)
+    {
+        ManifoldManifold* part = manifold_manifold_vec_get(manifold_alloc_manifold(), components, i);
+        if (!part) continue;
+        R3D_Mesh chunk = {0};
+        if (R3D_UpdateMeshFromManifold(&chunk, part))
+        {
+            // Store 'chunk' in your game-owned chunk list; later draw and unload it.
+            // Do not free this chunk here while your game still uses it.
+        }
+        manifold_delete_manifold(part);
+    }
+    manifold_delete_manifold_vec(components);
+}
+```
+
+Each chunk is a normal GPU mesh. Manifold doesn't create rigid bodies or keep track of your application transforms. Set those up separately. If you want brick outside and concrete inside on each fragment, apply the triangle/material separation from Recipe 1 to each native part instead of uploading as one mesh.
+
+## Quick choices
+
+| Requirement | Recommended path |
 | --- | --- |
-| `R3D_MANIFOLD_INVALID_INPUT` | Both meshes have linked, valid CPU data and triangle primitives |
-| `R3D_MANIFOLD_EMPTY_RESULT` | There is no remaining/overlapping volume; this is often an expected outcome |
-| `R3D_MANIFOLD_NATIVE_ERROR` | Check `result.manifoldError`; source solids may be open/non-manifold or invalid |
-| A cap is invisible | Inspect vertex **alpha** as well as normals/culling; zero-alpha generated faces can look missing |
-| UVs on new surfaces look wrong | Simple cap projection is only applied by `R3D_ManifoldSlicePlane`; custom Boolean faces may need mapping |
-| Another operation does not use the edited geometry | Ensure the target is linked and its CPU data is still alive |
-| Detached pieces disappear after a new operation | The old `R3D_ManifoldResult` was unloaded; its extra meshes are owned by that result |
-| Imported GLB cannot be edited | Load with `R3D_IMPORT_RETAIN_MESH_DATA` and check that the selected mesh is a valid solid |
+| A slice with the **same** material on its new caps | `R3D_ManifoldSlicePlane()` |
+| Custom cap albedo/normal/roughness/emission texture | Native `manifold_split_by_plane()` + classify cap triangles + two R3D meshes |
+| Many holes at once | Native `manifold_batch_boolean()` + one `manifold_difference()` + one upload |
+| One irregular deforming mesh | `manifold_refine_to_length()` + `manifold_warp()` |
+| Multiple moving debris pieces | `manifold_decompose()` and create one or more R3D meshes per component |
+| Precise texture mapping | Edit `R3D_MeshData` after native conversion, before GPU upload |
 
-Keep in mind:
+### API cheat sheet (the easy part)
 
-1. The **primary** `R3D_Mesh` remains caller-owned; `R3D_UnloadManifoldResult` frees only detached pieces and their CPU data.
-2. Linked CPU buffers remain owned by their original `R3D_MeshData` or `R3D_Model`. Never free them while editing through that link.
-3. Check `result.status` before using a result; an empty result is not automatically a Manifold error.
-4. Geometry operations work in **mesh-local space**. World-space collision queries, physics bodies and custom rendering materials are separate application responsibilities.
-5. GPU upload failure is not guaranteed to be fully transactional by the current R3D mesh allocator. Validate inputs and handle error statuses before treating an edit as committed.
+```c
+// Existing editable R3D meshes need linked CPU data:
+R3D_LinkMeshData(&mesh, &meshData);
+R3D_LinkMeshData(&cutter, &cutterData);
+R3D_ManifoldResult r = R3D_ManifoldSubtract(&mesh, &cutter); // Also Union / Intersect.
+R3D_UnloadManifoldResult(&r); // Frees extra pieces, NOT the primary mesh.
+R3D_ManifoldResult s = R3D_ManifoldSlicePlane(&mesh, (Vector3){0,1,0}, 0);
+R3D_UnloadManifoldResult(&s);
+```
 
-## Related code
+- Keep the original `R3D_MeshData` alive while linked; `R3D_UnloadMesh()` does not own/free it.
+- For imported GLB editing, load with `R3D_IMPORT_RETAIN_MESH_DATA`.
+- A newly generated Manifold cap can have **zero vertex alpha**—set it opaque before rendering.
+- Local-space Boolean geometry is independent of `R3D_DrawMesh()`'s visual transform.
+- Every `manifold_alloc_*`-created native object must be released by matching `manifold_delete_*`.
+- `R3D_MANIFOLD_EMPTY_RESULT` is normal for nonoverlapping/overcut operations, not a geometry crash.
 
-- [Convenience API and ownership](../include/r3d/r3d_manifold.h)
-- [Implementation, conversions and planar cap mapping](../src/r3d_manifold.c)
-- [Interactive Boolean/extrude/slice example](../examples/manifold_operations.c)
-- [Lower-level MeshGL round-trip example](../examples/manifold.c)
-- [Official Manifold documentation](https://elalish.github.io/manifold/)
+See also [`examples/manifold.c`](../examples/manifold.c), [`examples/manifold_operations.c`](../examples/manifold_operations.c), [Manifold's documentation](https://elalish.github.io/manifold/).
