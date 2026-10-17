@@ -220,6 +220,21 @@ R3DAPI Matrix R3D_GetMatrixViewProjection(void);
  */
 R3DAPI bool R3D_MatrixEquals(Matrix a, Matrix b);
 
+ // ----------------------------------------
+ // UTILS: Matrix Composition
+ // ----------------------------------------
+
+ // Create a complete TRS matrix.
+ R3DAPI Matrix R3D_MatrixFromTRS(Vector3 position, Quaternion rotation, Vector3 scale);
+
+ // Replace selected transform components while preserving the others.
+ R3DAPI Matrix R3D_MatrixFromTR(Matrix original, Vector3 position, Quaternion rotation);
+ R3DAPI Matrix R3D_MatrixFromTS(Matrix original, Vector3 position, Vector3 scale);
+ R3DAPI Matrix R3D_MatrixFromRS(Matrix original, Quaternion rotation, Vector3 scale);
+ R3DAPI Matrix R3D_MatrixFromT(Matrix original, Vector3 position);
+ R3DAPI Matrix R3D_MatrixFromR(Matrix original, Quaternion rotation);
+ R3DAPI Matrix R3D_MatrixFromS(Matrix original, Vector3 scale);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -79,6 +79,8 @@ add_example(r3d_draw_geometry_deformation "examples/draw_geometry_deformation.c"
 add_example(r3d_effect_showroom "examples/effect_showroom.c")
 add_example(r3d_line_showroom "examples/line_showroom.c")
 add_example(r3d_point_cloud_showroom "examples/point_cloud_showroom.c")
+add_example(r3d_texture_surface "examples/texture_surface.c")
+add_example(r3d_sprite_surface "examples/sprite_surface.c")
 
 if(R3D_SUPPORT_MANIFOLD)
     add_example(r3d_manifold "examples/manifold.c")

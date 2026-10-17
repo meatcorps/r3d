@@ -163,3 +163,27 @@ if(R3D_SUPPORT_MANIFOLD)
             RESOURCES_PATH="${R3D_ROOT_PATH}/examples/resources/"
     )
 endif()
+
+# ========================================
+# Matrix Composition Helpers
+# ========================================
+
+add_executable(r3d_test_matrix_helpers matrix_helpers.c)
+
+target_link_libraries(r3d_test_matrix_helpers PRIVATE
+        r3d
+        raylib
+)
+
+target_include_directories(r3d_test_matrix_helpers PRIVATE
+        "${R3D_ROOT_PATH}/include"
+)
+
+add_test(
+        NAME matrix_helpers
+        COMMAND r3d_test_matrix_helpers
+)
+
+set_tests_properties(matrix_helpers PROPERTIES
+        LABELS "matrix;headless"
+)

@@ -364,6 +364,7 @@ add_library(${PROJECT_NAME}
     "${R3D_ROOT_PATH}/src/r3d_sky.c"
     "${R3D_ROOT_PATH}/src/r3d_utils.c"
     "${R3D_ROOT_PATH}/src/r3d_vertex.c"
+    "${R3D_ROOT_PATH}/src/r3d_texture_surface.c"
 )
 
 if(R3D_SUPPORT_MANIFOLD)

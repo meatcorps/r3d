@@ -12,6 +12,7 @@
 #include "./modules/r3d_render.h"
 #include "./modules/r3d_target.h"
 #include "./r3d_core_state.h"
+#include "./common/r3d_math.h"
 
 // ========================================
 // PUBLIC API
@@ -207,4 +208,85 @@ void R3D_DrawRenderStats(int x, int y)
             (unsigned long long)stats.meshInstances),
         left, y + 150, 16, LIGHTGRAY
     );
+}
+
+// ========================================
+// MATRIX COMPOSITION
+// ========================================
+
+Matrix R3D_MatrixFromTRS(Vector3 position, Quaternion rotation, Vector3 scale)
+{
+    return r3d_matrix_srt_quat(scale, rotation, position);
+}
+
+Matrix R3D_MatrixFromTR(Matrix original, Vector3 position, Quaternion rotation)
+{
+    Vector3 oldPosition;
+    Vector3 scale;
+    Quaternion oldRotation;
+
+    r3d_matrix_decompose(
+        original, &oldPosition, &oldRotation, &scale
+    );
+
+    return r3d_matrix_srt_quat(scale, rotation, position);
+}
+
+Matrix R3D_MatrixFromTS(Matrix original, Vector3 position, Vector3 scale)
+{
+    Vector3 oldPosition;
+    Vector3 oldScale;
+    Quaternion rotation;
+
+    r3d_matrix_decompose(
+        original, &oldPosition, &rotation, &oldScale
+    );
+
+    return r3d_matrix_srt_quat(scale, rotation, position);
+}
+
+Matrix R3D_MatrixFromRS(Matrix original, Quaternion rotation, Vector3 scale)
+{
+    Vector3 position = {
+        original.m12, original.m13, original.m14
+    };
+
+    return r3d_matrix_srt_quat(scale, rotation, position);
+}
+
+Matrix R3D_MatrixFromT(Matrix original, Vector3 position)
+{
+    // Translation-only replacement preserves shear and
+    // all other matrix elements exactly.
+    original.m12 = position.x;
+    original.m13 = position.y;
+    original.m14 = position.z;
+
+    return original;
+}
+
+Matrix R3D_MatrixFromR(Matrix original, Quaternion rotation)
+{
+    Vector3 position;
+    Vector3 scale;
+    Quaternion oldRotation;
+
+    r3d_matrix_decompose(
+        original, &position, &oldRotation, &scale
+    );
+
+    return r3d_matrix_srt_quat(scale, rotation, position);
+}
+
+Matrix R3D_MatrixFromS(Matrix original, Vector3 scale)
+{
+    Vector3 position;
+    Vector3 oldScale;
+    Quaternion rotation;
+
+    r3d_matrix_decompose(
+        original, &position, &rotation, &oldScale
+    );
+
+    return r3d_matrix_srt_quat(scale, rotation, position);
 }
