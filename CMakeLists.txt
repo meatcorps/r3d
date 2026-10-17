@@ -369,6 +369,27 @@ add_library(${PROJECT_NAME}
 if(R3D_SUPPORT_MANIFOLD)
     target_sources(${PROJECT_NAME} PRIVATE
             "${R3D_ROOT_PATH}/src/r3d_manifold.c"
+            "${R3D_ROOT_PATH}/src/r3d_text_mesh.c"
+    )
+
+    # Keep stb_truetype private to the optional text mesh implementation.
+    # Raylib's source checkout already includes this header.
+    find_path(R3D_STB_TRUETYPE_INCLUDE_DIR
+            NAMES stb_truetype.h
+            HINTS
+            "${R3D_ROOT_PATH}/external/raylib/src/external"
+            "${R3D_ROOT_PATH}/external/stb"
+    )
+
+    if(NOT R3D_STB_TRUETYPE_INCLUDE_DIR)
+        message(FATAL_ERROR
+                "stb_truetype.h not found. Initialize external/raylib "
+                "or set R3D_STB_TRUETYPE_INCLUDE_DIR"
+        )
+    endif()
+
+    target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
+            "${R3D_STB_TRUETYPE_INCLUDE_DIR}"
     )
 endif()
 

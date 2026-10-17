@@ -79,12 +79,15 @@ add_example(r3d_draw_geometry_deformation "examples/draw_geometry_deformation.c"
 add_example(r3d_effect_showroom "examples/effect_showroom.c")
 add_example(r3d_line_showroom "examples/line_showroom.c")
 add_example(r3d_point_cloud_showroom "examples/point_cloud_showroom.c")
+
 if(R3D_SUPPORT_MANIFOLD)
     add_example(r3d_manifold "examples/manifold.c")
     target_link_libraries(r3d_manifold PRIVATE manifold::manifoldc)
 
     add_example(r3d_manifold_operations "examples/manifold_operations.c")
     target_link_libraries(r3d_manifold_operations PRIVATE manifold::manifoldc)
+
+    add_example(r3d_text_mesh "examples/text_mesh.c")
 endif()
 
 # Special include cases

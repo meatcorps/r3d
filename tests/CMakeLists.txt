@@ -115,4 +115,29 @@ if(R3D_SUPPORT_MANIFOLD)
 
     add_test(NAME manifold_native COMMAND r3d_test_manifold)
     set_tests_properties(manifold_native PROPERTIES LABELS "manifold;headless")
+
+    add_executable(r3d_test_text_mesh text_mesh_smoke.c)
+
+    target_link_libraries(r3d_test_text_mesh PRIVATE
+            r3d
+            manifold::manifoldc
+            raylib
+    )
+
+    target_include_directories(r3d_test_text_mesh PRIVATE
+            "${R3D_ROOT_PATH}/include"
+    )
+
+    target_compile_definitions(r3d_test_text_mesh PRIVATE
+            RESOURCES_PATH="${R3D_ROOT_PATH}/examples/resources/"
+    )
+
+    add_test(
+            NAME manifold_text_mesh
+            COMMAND r3d_test_text_mesh
+    )
+
+    set_tests_properties(manifold_text_mesh PROPERTIES
+            LABELS "manifold;text;headless"
+    )
 endif()
