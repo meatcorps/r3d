@@ -25,6 +25,60 @@
 extern "C" {
 #endif
 
+ typedef enum R3D_ShaderBuffer {
+  R3D_SHADER_BUFFER_SCENE_0,
+  R3D_SHADER_BUFFER_SCENE_1,
+
+  R3D_SHADER_BUFFER_ALBEDO,
+  R3D_SHADER_BUFFER_NORMAL,
+  R3D_SHADER_BUFFER_GEOM_NORMAL,
+  R3D_SHADER_BUFFER_ORM,
+  R3D_SHADER_BUFFER_OUTLINE_MASK,
+  R3D_SHADER_BUFFER_OUTLINE_HORIZONTAL,
+  R3D_SHADER_BUFFER_DEPTH,
+
+  R3D_SHADER_BUFFER_SELECTOR,
+  R3D_SHADER_BUFFER_RADIANCE,
+  R3D_SHADER_BUFFER_SPECULAR,
+  R3D_SHADER_BUFFER_VFOG_RAD,
+
+  R3D_SHADER_BUFFER_SSAO_0,
+  R3D_SHADER_BUFFER_SSAO_1,
+  R3D_SHADER_BUFFER_SSIL_0,
+  R3D_SHADER_BUFFER_SSIL_1,
+  R3D_SHADER_BUFFER_SSGI_0,
+  R3D_SHADER_BUFFER_SSGI_1,
+  R3D_SHADER_BUFFER_SSR,
+
+  R3D_SHADER_BUFFER_DOF_COC,
+  R3D_SHADER_BUFFER_DOF_0,
+  R3D_SHADER_BUFFER_DOF_1,
+  R3D_SHADER_BUFFER_BLOOM,
+  R3D_SHADER_BUFFER_LUMINANCE,
+
+  R3D_SHADER_BUFFER_EXPOSURE_0,
+  R3D_SHADER_BUFFER_EXPOSURE_1,
+
+  R3D_SHADER_BUFFER_SMAA_EDGES,
+  R3D_SHADER_BUFFER_SMAA_BLEND
+} R3D_ShaderBuffer;
+
+ /**
+  * Bind an existing internal R3D GPU buffer
+  * to a Raylib shader sampler.
+  *
+  * Does not copy or transfer the texture.
+  * R3D retains ownership.
+  *
+  * Returns false if the target is unavailable.
+  */
+ R3DAPI bool R3D_SetRaylibShaderBuffer(Shader shader, int uniformLocation, R3D_ShaderBuffer buffer);
+
+ /**
+  * Same operation, with an explicit R3D virtual mip level.
+  */
+ R3DAPI bool R3D_SetRaylibShaderBufferLevel(Shader shader, int uniformLocation, R3D_ShaderBuffer buffer, int mipLevel);
+
 /**
  * @brief Loads a texture from the specified file path.
  *

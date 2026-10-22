@@ -11,10 +11,127 @@
 #include "./modules/r3d_texture.h"
 #include "./common/r3d_image.h"
 #include "./r3d_core_state.h"
+#include "modules/r3d_target.h"
+
+// ========================================
+// PRIVATE API
+// ========================================
+
+static r3d_target_t resolve_shader_buffer(R3D_ShaderBuffer buffer)
+{
+    switch (buffer)
+    {
+        #define MAP_BUFFER(name) \
+            case R3D_SHADER_BUFFER_##name: \
+                return R3D_TARGET_##name;
+
+        MAP_BUFFER(SCENE_0)
+        MAP_BUFFER(SCENE_1)
+
+        MAP_BUFFER(ALBEDO)
+        MAP_BUFFER(NORMAL)
+        MAP_BUFFER(GEOM_NORMAL)
+        MAP_BUFFER(ORM)
+        MAP_BUFFER(OUTLINE_MASK)
+        MAP_BUFFER(OUTLINE_HORIZONTAL)
+        MAP_BUFFER(DEPTH)
+
+        MAP_BUFFER(SELECTOR)
+        MAP_BUFFER(RADIANCE)
+        MAP_BUFFER(SPECULAR)
+        MAP_BUFFER(VFOG_RAD)
+
+        MAP_BUFFER(SSAO_0)
+        MAP_BUFFER(SSAO_1)
+        MAP_BUFFER(SSIL_0)
+        MAP_BUFFER(SSIL_1)
+        MAP_BUFFER(SSGI_0)
+        MAP_BUFFER(SSGI_1)
+        MAP_BUFFER(SSR)
+
+        MAP_BUFFER(DOF_COC)
+        MAP_BUFFER(DOF_0)
+        MAP_BUFFER(DOF_1)
+        MAP_BUFFER(BLOOM)
+        MAP_BUFFER(LUMINANCE)
+
+        MAP_BUFFER(EXPOSURE_0)
+        MAP_BUFFER(EXPOSURE_1)
+
+        MAP_BUFFER(SMAA_EDGES)
+        MAP_BUFFER(SMAA_BLEND)
+
+        #undef MAP_BUFFER
+
+        default:
+            return R3D_TARGET_INVALID;
+    }
+}
+
+static bool bind_shader_buffer(Shader shader, int uniformLocation, R3D_ShaderBuffer buffer, int mipLevel)
+{
+    if (!R3D.initialized ||
+        shader.id == 0 ||
+        uniformLocation < 0)
+    {
+        return false;
+    }
+
+    r3d_target_t target = resolve_shader_buffer(buffer);
+
+    if (!r3d_target_exists(target))
+        return false;
+
+    int minLevel = r3d_target_get_min_level(target);
+    int maxLevel = r3d_target_get_max_level(target);
+
+    // -1 means the target's native base resolution.
+    if (mipLevel == -1)
+        mipLevel = minLevel;
+
+    if (mipLevel < minLevel || mipLevel > maxLevel)
+        return false;
+
+    Texture2D texture = {0};
+
+    texture.id = r3d_target_get_level(
+        target,
+        mipLevel
+    );
+
+    // Registers the existing GPU resource with Raylib.
+    SetShaderValueTexture(
+        shader,
+        uniformLocation,
+        texture
+    );
+
+    return true;
+}
 
 // ========================================
 // PUBLIC API
 // ========================================
+
+bool R3D_SetRaylibShaderBuffer(Shader shader, int uniformLocation, R3D_ShaderBuffer buffer)
+{
+    return bind_shader_buffer(
+        shader,
+        uniformLocation,
+        buffer,
+        -1
+    );
+}
+
+bool R3D_SetRaylibShaderBufferLevel(Shader shader, int uniformLocation, R3D_ShaderBuffer buffer, int mipLevel)
+{
+    return bind_shader_buffer(
+        shader,
+        uniformLocation,
+        buffer,
+        mipLevel
+    );
+}
 
 Texture2D R3D_LoadTexture(const char* fileName, bool isColor)
 {
