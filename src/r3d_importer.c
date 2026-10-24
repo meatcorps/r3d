@@ -272,14 +272,15 @@ bool r3d_importer_load_lights(const R3D_Importer* importer, R3D_Model* model)
 
         R3D_ImportedLight* dest = &lights[i];
 
-        snprintf(
-            dest->name,
-            sizeof(dest->name),
-            "%s",
-            source->mName.length > 0
-                ? source->mName.data
-                : ""
-        );
+        size_t nameLength = source->mName.length;
+
+        if (nameLength >= sizeof(dest->name))
+        {
+            nameLength = sizeof(dest->name) - 1;
+        }
+
+        memcpy(dest->name, source->mName.data, nameLength);
+        dest->name[nameLength] = '\0';
 
         dest->sourceType = (int)source->mType;
 
