@@ -26,6 +26,11 @@
 
 static bool load_model_components(R3D_Model* model, const R3D_Importer* importer)
 {
+    if (!r3d_importer_load_lights(importer, model))
+    {
+        return false;
+    }
+
     if (!r3d_importer_load_meshes(importer, model))
     {
         return false;
@@ -130,7 +135,9 @@ R3D_Model R3D_LoadModelFromImporter(const R3D_Importer* importer)
         R3D_TRACELOG(LOG_INFO, "Model loaded successfully: '%s'", importer->name);
         R3D_TRACELOG(LOG_INFO, "    > Materials count: %i", model.materialCount);
         R3D_TRACELOG(LOG_INFO, "    > Meshes count: %i", model.meshCount);
+        R3D_TRACELOG(LOG_INFO, "    > Scene node references: %i", model.instanceCount);
         R3D_TRACELOG(LOG_INFO, "    > Bones count: %i", model.skeleton.boneCount);
+        R3D_TRACELOG(LOG_INFO, "    > Imported lights: %i", model.lightCount);
     }
     else
     {
@@ -170,6 +177,8 @@ void R3D_UnloadModel(R3D_Model model, bool unloadMaterials)
 {
     R3D_UnloadSkeleton(model.skeleton);
 
+    r3d_free(model.lights);
+
     if (model.shapeKeySets)
     {
         for (int i = 0; i < model.meshCount; i++)
@@ -204,12 +213,49 @@ void R3D_UnloadModel(R3D_Model model, bool unloadMaterials)
         }
     }
 
+    r3d_free(model.instances);
     r3d_free(model.meshMaterials);
     r3d_free(model.materials);
     r3d_free(model.meshData);
     r3d_free(model.meshNames);
     r3d_free(model.shapeKeySets);
     r3d_free(model.meshes);
+}
+
+int R3D_GetModelInstanceCount(R3D_Model model)
+{
+    return model.instances ? model.instanceCount : 0;
+}
+
+bool R3D_GetModelInstance(R3D_Model model, int index, R3D_ModelInstance* result)
+{
+    if (!result || !model.instances || index < 0 || index >= model.instanceCount)
+    {
+        return false;
+    }
+
+    *result = model.instances[index];
+
+    return true;
+}
+
+int R3D_GetModelLightCount(R3D_Model model)
+{
+    return model.lights ? model.lightCount : 0;
+}
+
+bool R3D_GetModelLight(R3D_Model model, int index, R3D_ImportedLight* result)
+{
+    if (!result ||
+        !model.lights ||
+        index < 0 ||
+        index >= model.lightCount)
+    {
+        return false;
+    }
+
+    *result = model.lights[index];
+    return true;
 }
 
 int R3D_GetModelMeshIndex(R3D_Model model, const char* meshName)

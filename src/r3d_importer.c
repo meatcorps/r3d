@@ -15,6 +15,14 @@
 #   include "./importer/r3d_importer_internal.h"
 #   include "./common/r3d_helper.h"
 #   include <assimp/cimport.h>
+#   include <assimp/light.h>
+#   include <assimp/metadata.h>
+#   include <raymath.h>
+#   include <limits.h>
+#   include <math.h>
+#   include <stdio.h>
+#   include <string.h>
+#   include "./common/r3d_math.h"
 #endif
 
 // ========================================
@@ -143,7 +151,284 @@ static void build_bone_mapping(R3D_Importer* importer)
     }
 }
 
+static void find_light_node(const struct aiNode* node, const char* name, Matrix parentTransform, const struct aiNode** resultNode, Matrix* resultTransform, int* matchCount)
+{
+    if (!node || *matchCount > 1)
+        return;
+
+    Matrix local =
+        r3d_importer_cast(node->mTransformation);
+
+    Matrix global =
+        MatrixMultiply(local, parentTransform);
+
+    if (strcmp(node->mName.data, name) == 0)
+    {
+        (*matchCount)++;
+
+        if (*matchCount == 1)
+        {
+            *resultNode = node;
+            *resultTransform = global;
+        }
+    }
+
+    for (unsigned int i = 0; i < node->mNumChildren; i++)
+    {
+        find_light_node(node->mChildren[i], name, global, resultNode, resultTransform, matchCount);
+
+        if (*matchCount > 1)
+            break;
+    }
+}
+
+static bool get_light_range(const struct aiNode* node, float* result)
+{
+    if (!node || !node->mMetaData || !result)
+        return false;
+
+    const struct aiMetadata* metadata = node->mMetaData;
+
+    for (unsigned int i = 0;
+         i < metadata->mNumProperties;
+         i++)
+    {
+        if (strcmp(
+            metadata->mKeys[i].data,
+            "PBR_LightRange") != 0)
+        {
+            continue;
+        }
+
+        const struct aiMetadataEntry* entry =
+            &metadata->mValues[i];
+
+        if (!entry->mData)
+            return false;
+
+        float value;
+
+        switch (entry->mType)
+        {
+            case AI_FLOAT:
+                value = *(const float*)entry->mData;
+                break;
+
+            case AI_DOUBLE:
+                value = (float)*(const double*)entry->mData;
+                break;
+
+            default:
+                return false;
+        }
+
+        if (!isfinite(value) || value <= 0.0f)
+            return false;
+
+        *result = value;
+        return true;
+    }
+
+    return false;
+}
+
 #endif // R3D_SUPPORT_ASSIMP
+
+bool r3d_importer_load_lights(const R3D_Importer* importer, R3D_Model* model)
+{
+#ifdef R3D_SUPPORT_ASSIMP
+
+    if (!importer || !importer->scene || !model)
+        return false;
+
+    const struct aiScene* scene = importer->scene;
+
+    if (scene->mNumLights == 0)
+        return true;
+
+    if (!scene->mLights ||
+        scene->mNumLights > INT_MAX)
+    {
+        return false;
+    }
+
+    R3D_ImportedLight* lights = r3d_zalloc(
+        (size_t)scene->mNumLights *
+        sizeof(R3D_ImportedLight)
+    );
+
+    if (!lights)
+        return false;
+
+    for (unsigned int i = 0; i < scene->mNumLights; i++)
+    {
+        const struct aiLight* source = scene->mLights[i];
+
+        if (!source)
+        {
+            r3d_free(lights);
+            return false;
+        }
+
+        R3D_ImportedLight* dest = &lights[i];
+
+        snprintf(
+            dest->name,
+            sizeof(dest->name),
+            "%s",
+            source->mName.length > 0
+                ? source->mName.data
+                : ""
+        );
+
+        dest->sourceType = (int)source->mType;
+
+        switch (source->mType)
+        {
+            case aiLightSource_DIRECTIONAL:
+                dest->type = R3D_LIGHT_DIR;
+                break;
+
+            case aiLightSource_POINT:
+                dest->type = R3D_LIGHT_OMNI;
+                break;
+
+            case aiLightSource_SPOT:
+                dest->type = R3D_LIGHT_SPOT;
+                break;
+
+            default:
+                dest->type = R3D_LIGHT_TYPE_COUNT;
+                break;
+        }
+
+        dest->position =
+            r3d_importer_cast(source->mPosition);
+
+        dest->direction =
+            r3d_importer_cast(source->mDirection);
+
+        /*
+         * Assimp glTF2 imports color multiplied
+         * by physical intensity.
+         *
+         * Keep floating-point values intact.
+         */
+        dest->colorIntensity = (Vector3) {
+            source->mColorDiffuse.r,
+            source->mColorDiffuse.g,
+            source->mColorDiffuse.b
+        };
+
+        dest->attenuationConstant =
+            source->mAttenuationConstant;
+
+        dest->attenuationLinear =
+            source->mAttenuationLinear;
+
+        dest->attenuationQuadratic =
+            source->mAttenuationQuadratic;
+
+        if (dest->type == R3D_LIGHT_SPOT)
+        {
+            dest->innerConeAngle =
+                source->mAngleInnerCone * RAD2DEG;
+
+            dest->outerConeAngle =
+                source->mAngleOuterCone * RAD2DEG;
+        }
+
+        /*
+         * Resolve the node belonging to this light.
+         * Assimp's glTF2 importer associates light
+         * definitions with scene-node names.
+         */
+        const struct aiNode* node = NULL;
+
+        Matrix nodeTransform = MatrixIdentity();
+        int matches = 0;
+
+        if (source->mName.length > 0)
+        {
+            find_light_node(
+                scene->mRootNode,
+                source->mName.data,
+                MatrixIdentity(),
+                &node,
+                &nodeTransform,
+                &matches
+            );
+        }
+
+        if (matches == 1)
+        {
+            dest->nodeResolved = 1;
+
+            dest->position = r3d_vector3_transform(
+                dest->position,
+                &nodeTransform
+            );
+
+            /*
+             * Extract rotation separately so a
+             * nonuniform node scale doesn't distort
+             * the light direction.
+             */
+            Vector3 translation;
+            Vector3 scale;
+            Quaternion rotation;
+
+            MatrixDecompose(
+                nodeTransform,
+                &translation,
+                &rotation,
+                &scale
+            );
+
+            Vector3 direction = Vector3RotateByQuaternion(
+                dest->direction,
+                rotation
+            );
+
+            if (Vector3LengthSqr(direction) > 1e-12f)
+            {
+                dest->direction =
+                    Vector3Normalize(direction);
+            }
+
+            if (get_light_range(node, &dest->range))
+            {
+                dest->hasRange = 1;
+            }
+        }
+        else
+        {
+            R3D_TRACELOG(
+                LOG_WARNING,
+                "Light '%s': scene node resolution failed (%d matches)",
+                source->mName.data,
+                matches
+            );
+        }
+    }
+
+    model->lights = lights;
+    model->lightCount = (int)scene->mNumLights;
+
+    R3D_TRACELOG(
+        LOG_INFO,
+        "R3D: Imported %d light definitions",
+        model->lightCount
+    );
+
+    return true;
+
+#else
+    (void)importer;
+    (void)model;
+    return false;
+#endif
+}
 
 // ========================================
 // PUBLIC FUNCTIONS
@@ -170,7 +455,6 @@ R3D_Importer* R3D_LoadImporter(const char* filePath, R3D_ImportFlags flags)
     build_bone_mapping(importer);
 
     R3D_TRACELOG(LOG_INFO, "Importer loaded successfully: '%s'", filePath);
-
     return importer;
 
 #else

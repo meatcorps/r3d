@@ -1195,6 +1195,129 @@ void R3D_DrawAnimatedMeshProBounds(R3D_Mesh mesh, R3D_Material material, R3D_Ani
     r3d_render_call_push(&drawCall);
 }
 
+static void draw_model_node_references(R3D_Model model, Matrix transform, GLuint skinTexture, const BoundingBox* animatedBounds, const R3D_InstanceBuffer* externalInstances, int offset, int count)
+{
+    if (!model.meshes || !model.materials || !model.meshMaterials || !model.instances || model.instanceCount <= 0)
+        return;
+
+    int instanceOffset = 0;
+    int instanceCount = 0;
+
+    if (externalInstances)
+    {
+        instanceOffset = R3D_CLAMP(
+            offset,
+            0,
+            externalInstances->capacity
+        );
+
+        instanceCount = R3D_CLAMP(
+            count,
+            0,
+            externalInstances->capacity - instanceOffset
+        );
+
+        if (instanceCount == 0)
+            return;
+    }
+
+    for (int i = 0; i < model.instanceCount; i++)
+    {
+        const R3D_ModelInstance* reference =
+            &model.instances[i];
+
+        int meshIndex = reference->meshIndex;
+
+        if (meshIndex < 0 || meshIndex >= model.meshCount)
+            continue;
+
+        const R3D_Mesh* mesh =
+            &model.meshes[meshIndex];
+
+        if (!IS_MESH_VALID(*mesh))
+            continue;
+
+        int materialIndex =
+            model.meshMaterials[meshIndex];
+
+        if (materialIndex < 0 ||
+            materialIndex >= model.materialCount)
+        {
+            continue;
+        }
+
+        Matrix worldTransform = MatrixMultiply(
+            reference->transform,
+            transform
+        );
+
+        BoundingBox bounds =
+            reference->skinned && animatedBounds
+                ? *animatedBounds
+                : mesh->aabb;
+
+        r3d_render_group_t group = {0};
+
+        group.transform = worldTransform;
+
+        group.skinTexture = reference->skinned
+            ? skinTexture
+            : 0;
+
+        if (externalInstances)
+        {
+            group.instances = *externalInstances;
+            group.instanceOffset = instanceOffset;
+            group.instanceCount = instanceCount;
+        }
+        else
+        {
+            group.obb = R3D_GetOrientedBox(
+                bounds,
+                worldTransform
+            );
+        }
+
+        r3d_render_group_push(&group);
+
+        r3d_render_call_t call = {0};
+
+        call.type = R3D_RENDER_CALL_MESH;
+
+        call.mesh.material =
+            model.materials[materialIndex];
+
+        call.mesh.instance = *mesh;
+        call.mesh.instance.aabb = bounds;
+
+        /*
+         * Mirrored transforms reverse triangle winding.
+         * Adjust culling on the submitted material copy,
+         * without modifying the source material.
+         */
+        const Matrix* m = &worldTransform;
+
+        float determinant =
+            m->m0 * (m->m5 * m->m10 - m->m6 * m->m9)
+          - m->m4 * (m->m1 * m->m10 - m->m2 * m->m9)
+          + m->m8 * (m->m1 * m->m6 - m->m2 * m->m5);
+
+        if (determinant < 0.0f)
+        {
+            if (call.mesh.material.cullMode == R3D_CULL_BACK)
+            {
+                call.mesh.material.cullMode = R3D_CULL_FRONT;
+            }
+            else if (call.mesh.material.cullMode == R3D_CULL_FRONT)
+            {
+                call.mesh.material.cullMode = R3D_CULL_BACK;
+            }
+        }
+
+        r3d_render_call_push(&call);
+    }
+}
+
 void R3D_DrawModel(R3D_Model model, Vector3 position, float scale)
 {
     Matrix transform = r3d_matrix_st((Vector3) {scale, scale, scale}, position);
@@ -1209,6 +1332,12 @@ void R3D_DrawModelEx(R3D_Model model, Vector3 position, Quaternion rotation, Vec
 
 void R3D_DrawModelPro(R3D_Model model, Matrix transform)
 {
+    if (model.instances && model.instanceCount > 0)
+    {
+        draw_model_node_references(model, transform, model.skeleton.skinTexture, NULL, NULL, 0, 0);
+        return;
+    }
+
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;
     drawGroup.obb = R3D_GetOrientedBox(model.aabb, transform);
@@ -1243,6 +1372,12 @@ void R3D_DrawModelInstancedEx(R3D_Model model, R3D_InstanceBuffer instances, int
 void R3D_DrawModelInstancedPro(R3D_Model model, R3D_InstanceBuffer instances, int offset, int count, Matrix transform)
 {
     if (count <= 0) return;
+
+    if (model.instances && model.instanceCount > 0)
+    {
+        draw_model_node_references(model, transform, model.skeleton.skinTexture, NULL, &instances, offset, count);
+        return;
+    }
 
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;
@@ -1295,6 +1430,14 @@ void R3D_DrawAnimatedModelProBounds(R3D_Model model, R3D_AnimationPlayer player,
         return;
     }
 
+    if (model.instances && model.instanceCount > 0)
+    {
+        GLuint skinTexture = player.skinTexture > 0 ? player.skinTexture : model.skeleton.skinTexture;
+
+        draw_model_node_references(model, transform, skinTexture, &bounds, NULL,0, 0);
+        return;
+    }
+
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;
     drawGroup.obb = R3D_GetOrientedBox(bounds, transform);
@@ -1336,6 +1479,19 @@ void R3D_DrawAnimatedModelInstancedEx(R3D_Model model, R3D_AnimationPlayer playe
 void R3D_DrawAnimatedModelInstancedPro(R3D_Model model, R3D_AnimationPlayer player, R3D_InstanceBuffer instances, int offset, int count, Matrix transform)
 {
     if (count <= 0) return;
+
+    if (model.instances && model.instanceCount > 0)
+    {
+        GLuint skinTexture = player.skinTexture > 0 ? player.skinTexture : model.skeleton.skinTexture;
+
+        BoundingBox bounds = model.hasAnimatedAabb ? model.animatedAabb : model.aabb;
+
+        if (!R3D_IsBoundingBoxValid(bounds))
+            return;
+
+        draw_model_node_references(model, transform, skinTexture, &bounds, &instances, offset, count);
+        return;
+    }
 
     r3d_render_group_t drawGroup = {0};
     drawGroup.transform = transform;

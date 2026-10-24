@@ -68,6 +68,17 @@ struct R3D_Importer {
     char name[256];
 };
 
+/**
+ * Extracts imported lights, including scene-node transforms.
+ *
+ * The model owns the allocated metadata.
+ * Does not create renderer lights.
+ */
+bool r3d_importer_load_lights(
+    const R3D_Importer* importer,
+    R3D_Model* model
+);
+
 // ========================================
 // TEXTURE CACHE
 // ========================================

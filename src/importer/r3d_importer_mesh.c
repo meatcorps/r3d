@@ -16,6 +16,7 @@
 
 #include <assimp/mesh.h>
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -642,52 +643,165 @@ static bool load_mesh_internal(
 // RECURSIVE LOADING
 // ========================================
 
-static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const struct aiNode* node, const Matrix* parentTransform)
+static bool count_mesh_references(const struct aiNode* node, int* count)
 {
-    Matrix localTransform = r3d_importer_cast(node->mTransformation);
-    Matrix globalTransform = MatrixMultiply(localTransform, *parentTransform);
+    if (!node || !count)
+        return false;
 
-    // Process all meshes in this node
+    if (node->mNumMeshes > (unsigned int)(INT_MAX - *count))
+        return false;
+
+    *count += (int)node->mNumMeshes;
+
+    for (unsigned int i = 0; i < node->mNumChildren; i++)
+    {
+        if (!count_mesh_references(node->mChildren[i], count))
+            return false;
+    }
+
+    return true;
+}
+
+static void expand_transformed_bounds(BoundingBox* dst, BoundingBox src, Matrix transform)
+{
+    for (int i = 0; i < 8; i++)
+    {
+        Vector3 corner = {
+            (i & 1) ? src.max.x : src.min.x,
+            (i & 2) ? src.max.y : src.min.y,
+            (i & 4) ? src.max.z : src.min.z
+        };
+
+        Vector3 transformed =
+            r3d_vector3_transform(corner, &transform);
+
+        dst->min = Vector3Min(dst->min, transformed);
+        dst->max = Vector3Max(dst->max, transformed);
+    }
+}
+
+static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const struct aiNode* node, const Matrix* parentTransform, unsigned char* uploaded, int allocatedInstances)
+{
+    Matrix localTransform =
+        r3d_importer_cast(node->mTransformation);
+
+    Matrix globalTransform =
+        MatrixMultiply(localTransform, *parentTransform);
+
     for (unsigned int i = 0; i < node->mNumMeshes; i++)
     {
         uint32_t meshIndex = node->mMeshes[i];
-        const struct aiMesh* mesh = r3d_importer_get_mesh(importer, meshIndex);
 
-        R3D_MeshData* meshData = model->meshData
-            ? &model->meshData[meshIndex]
-            : NULL;
-
-        R3D_MeshName* meshName =
-            model->meshNames
-                ? &model->meshNames[meshIndex]
-                : NULL;
-
-        R3D_ShapeKeySet* shapeKeys =
-            model->shapeKeySets
-                ? &model->shapeKeySets[meshIndex]
-                : NULL;
-
-
-        if (!load_mesh_internal(
-            importer,
-            &model->meshes[meshIndex],
-            meshData,
-            meshName,
-            shapeKeys,
-            mesh,
-            globalTransform,
-            mesh->mNumBones > 0))
+        if (meshIndex >= (uint32_t)model->meshCount ||
+            model->instanceCount >= allocatedInstances)
         {
+            R3D_TRACELOG(
+                LOG_ERROR,
+                "Invalid node mesh reference during import"
+            );
+
             return false;
         }
 
-        model->meshMaterials[meshIndex] = mesh->mMaterialIndex;
+        const struct aiMesh* mesh =
+            r3d_importer_get_mesh(importer, meshIndex);
+
+        if (!mesh)
+            return false;
+
+        bool hasBones = mesh->mNumBones > 0;
+
+        /*
+         * The current R3D model architecture supports
+         * one skeleton palette per model.
+         *
+         * A shared mesh with independently skinned
+         * node references cannot be represented safely.
+         */
+        if (uploaded[meshIndex] && hasBones)
+        {
+            R3D_TRACELOG(
+                LOG_ERROR,
+                "Skinned mesh %u referenced by multiple nodes",
+                meshIndex
+            );
+
+            return false;
+        }
+
+        if (!uploaded[meshIndex])
+        {
+            R3D_MeshData* meshData =
+                model->meshData
+                    ? &model->meshData[meshIndex]
+                    : NULL;
+
+            R3D_MeshName* meshName =
+                model->meshNames
+                    ? &model->meshNames[meshIndex]
+                    : NULL;
+
+            R3D_ShapeKeySet* shapeKeys =
+                model->shapeKeySets
+                    ? &model->shapeKeySets[meshIndex]
+                    : NULL;
+
+            /*
+             * Static geometry stays in mesh-local space.
+             *
+             * For skinned geometry, preserve the original
+             * skeleton-space vertex processing and bind
+             * pose bounding-box calculation.
+             */
+            Matrix vertexTransform = hasBones
+                ? globalTransform
+                : R3D_MATRIX_IDENTITY;
+
+            if (!load_mesh_internal(
+                importer,
+                &model->meshes[meshIndex],
+                meshData,
+                meshName,
+                shapeKeys,
+                mesh,
+                vertexTransform,
+                hasBones))
+            {
+                return false;
+            }
+
+            uploaded[meshIndex] = 1;
+
+            model->meshMaterials[meshIndex] =
+                mesh->mMaterialIndex;
+        }
+
+        R3D_ModelInstance* instance =
+            &model->instances[model->instanceCount++];
+
+        instance->meshIndex = (int)meshIndex;
+        instance->skinned = hasBones ? 1 : 0;
+
+        instance->transform = hasBones
+            ? R3D_MATRIX_IDENTITY
+            : globalTransform;
+
+        expand_transformed_bounds(
+            &model->aabb,
+            model->meshes[meshIndex].aabb,
+            instance->transform
+        );
     }
 
-    // Process all children recursively
     for (unsigned int i = 0; i < node->mNumChildren; i++)
     {
-        if (!load_recursive(importer, model, node->mChildren[i], &globalTransform))
+        if (!load_recursive(
+            importer,
+            model,
+            node->mChildren[i],
+            &globalTransform,
+            uploaded,
+            allocatedInstances))
         {
             return false;
         }
@@ -695,6 +809,7 @@ static bool load_recursive(const R3D_Importer* importer, R3D_Model* model, const
 
     return true;
 }
+
 
 // ========================================
 // PUBLIC FUNCTIONS
@@ -712,6 +827,16 @@ bool r3d_importer_load_meshes(const R3D_Importer* importer, R3D_Model* model)
     bool keepMeshNames = R3D_BIT_ANY(importer->flags, R3D_IMPORT_RETAIN_MESH_NAMES);
 
     const struct aiScene* scene = r3d_importer_get_scene(importer);
+
+    if (!scene || scene->mNumMeshes == 0 || scene->mNumMeshes > INT_MAX || !r3d_importer_get_root(importer))
+    {
+        R3D_TRACELOG(
+            LOG_ERROR,
+            "Invalid Assimp scene"
+        );
+
+        return false;
+    }
 
     // Allocate morph storage only if any mesh has targets.
     bool hasShapeKeys = false;
@@ -756,20 +881,77 @@ bool r3d_importer_load_meshes(const R3D_Importer* importer, R3D_Model* model)
         }
     }
 
-    // Load all meshes recursively
-    if (!load_recursive(importer, model, r3d_importer_get_root(importer), &R3D_MATRIX_IDENTITY))
+    if (!model->meshes || !model->meshMaterials || (keepMeshData && !model->meshData) || (keepMeshNames && !model->meshNames))
     {
+        R3D_TRACELOG(
+            LOG_ERROR,
+            "Failed to allocate model mesh arrays"
+        );
+
         goto cleanup_and_fail;
     }
 
-    // Calculate model bounding box
-    model->aabb.min = (Vector3) {+FLT_MAX, +FLT_MAX, +FLT_MAX};
-    model->aabb.max = (Vector3) {-FLT_MAX, -FLT_MAX, -FLT_MAX};
-    for (int i = 0; i < model->meshCount; i++)
+    /*
+     * Load all meshes recursively
+     * Count scene-node references independently from
+     * the number of unique Assimp meshes.
+     */
+    int referenceCount = 0;
+
+    if (!count_mesh_references(r3d_importer_get_root(importer), &referenceCount) || referenceCount == 0)
     {
-        model->aabb.min = Vector3Min(model->aabb.min, model->meshes[i].aabb.min);
-        model->aabb.max = Vector3Max(model->aabb.max, model->meshes[i].aabb.max);
+        R3D_TRACELOG(
+            LOG_ERROR,
+            "Model has no valid mesh references"
+        );
+
+        goto cleanup_and_fail;
     }
+
+    /*
+     * Allocate the instance list.
+     */
+    model->instances = r3d_zalloc((size_t)referenceCount * sizeof(*model->instances)
+    );
+
+    if (!model->instances)
+        goto cleanup_and_fail;
+
+    /*
+     * Track which unique meshes have already been uploaded.
+     */
+    unsigned char* uploaded = r3d_zalloc(
+        (size_t)model->meshCount
+    );
+
+    if (!uploaded)
+        goto cleanup_and_fail;
+
+    /*
+     * Model bounds will be accumulated from every
+     * transformed scene-node reference.
+     */
+    model->aabb.min = (Vector3) {
+        +FLT_MAX, +FLT_MAX, +FLT_MAX
+    };
+
+    model->aabb.max = (Vector3) {
+        -FLT_MAX, -FLT_MAX, -FLT_MAX
+    };
+
+    bool success = load_recursive(importer, model, r3d_importer_get_root(importer), &R3D_MATRIX_IDENTITY, uploaded, referenceCount);
+
+    r3d_free(uploaded);
+
+    if (!success)
+        goto cleanup_and_fail;
+
+    R3D_TRACELOG(
+        LOG_INFO,
+        "R3D: Model scene references: %i instances of %i unique meshes",
+        model->instanceCount,
+        model->meshCount
+    );
 
     // Slightly expands the bounding box of skinned models
     if (scene->mNumSkeletons > 0)
@@ -809,6 +991,11 @@ cleanup_and_fail:
             );
         }
     }
+
+    r3d_free(model->instances);
+
+    model->instances = NULL;
+    model->instanceCount = 0;
 
     r3d_free(model->meshMaterials);
     r3d_free(model->meshData);

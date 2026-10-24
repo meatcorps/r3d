@@ -37,6 +37,18 @@ typedef char R3D_MeshName[32];
 // ========================================
 
 /**
+ * A reference to a mesh from an imported scene node.
+ *
+ * Multiple instances may reference the same mesh.
+ * The instance does not own the mesh or its materials.
+ */
+typedef struct R3D_ModelInstance {
+    int meshIndex;
+    Matrix transform;
+    int skinned;
+} R3D_ModelInstance;
+
+/**
  * @brief Represents a complete 3D model with meshes and materials.
  *
  * Contains multiple meshes and their associated materials, along with animation and bounding information.
@@ -61,6 +73,11 @@ typedef struct R3D_Model {
 
     R3D_Skeleton skeleton;      ///< Skeleton hierarchy and bind pose used for skinning (NULL if non-skinned).
 
+    R3D_ImportedLight* lights;
+    int lightCount;
+
+    R3D_ModelInstance* instances;
+    int instanceCount;
 } R3D_Model;
 
 // ========================================
@@ -156,6 +173,21 @@ R3DAPI R3D_Model R3D_LoadModelFromImporter(const R3D_Importer* importer);
 R3DAPI void R3D_UnloadModel(R3D_Model model, bool unloadMaterials);
 
 /**
+ * Returns the number of imported light definitions.
+ *
+ * Imported lights are metadata only.
+ */
+R3DAPI int R3D_GetModelLightCount(R3D_Model model);
+
+/**
+ * Copies one imported light definition.
+ *
+ * Returns false on invalid arguments.
+ * The returned value is independent of model lifetime.
+ */
+R3DAPI bool R3D_GetModelLight(R3D_Model model, int index, R3D_ImportedLight* result);
+
+/**
  * @brief Sets the default local-space animated culling bounds for a model.
  *
  * Does not modify the imported model.aabb.
@@ -178,6 +210,17 @@ R3DAPI void R3D_ClearModelAnimatedBounds(R3D_Model* model);
  * @return The mesh index, or -1 if not found or if @c meshNames is NULL.
  */
 R3DAPI int R3D_GetModelMeshIndex(R3D_Model model, const char* meshName);
+
+/**
+ * Returns the number of imported mesh references.
+ */
+R3DAPI int R3D_GetModelInstanceCount(R3D_Model model);
+
+/**
+ * Retrieves an imported mesh reference.
+ * Returns false when the index is invalid.
+ */
+R3DAPI bool R3D_GetModelInstance(R3D_Model model, int index, R3D_ModelInstance* result);
 
 /**
  * @brief Returns a pointer to the mesh with the given name.

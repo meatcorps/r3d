@@ -10,6 +10,7 @@
 #define R3D_IMPORTER_H
 
 #include "./r3d_platform.h"
+#include "./r3d_lighting.h"
 #include <stdint.h>
 
 /**
@@ -105,6 +106,38 @@ typedef uint32_t R3D_ImportFlags;
  * resources (models, skeletons, animations) without re-importing the file.
  */
 typedef struct R3D_Importer R3D_Importer;
+
+/**
+ * Light metadata imported from an asset.
+ *
+ * Does not create a renderer light or allocate shadows.
+ * Position and direction are model-local when nodeResolved is 1.
+ *
+ * ColorIntensity contains linear RGB values with source
+ * intensity already applied. Values may exceed 1.0.
+ */
+typedef struct R3D_ImportedLight {
+ char name[256];
+
+ R3D_LightType type;
+ int sourceType;
+
+ Vector3 position;
+ Vector3 direction;
+ Vector3 colorIntensity;
+
+ float range;
+ int hasRange;
+
+ float innerConeAngle;
+ float outerConeAngle;
+
+ float attenuationConstant;
+ float attenuationLinear;
+ float attenuationQuadratic;
+
+ int nodeResolved;
+} R3D_ImportedLight;
 
 // ========================================
 // PUBLIC API
